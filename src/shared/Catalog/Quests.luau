@@ -22,7 +22,7 @@ export type QuestDef = {
 }
 
 local Quests: { QuestDef } = {
-	{ kind = "build", target = "road", count = 4, reward = 2000, text = "Build 4 roads" },
+	{ kind = "build", target = "road", count = 4, reward = 2000, text = "Draw 32 studs of road" },
 	{ kind = "build", target = "small_house", count = 3, reward = 3000, text = "Build 3 Small Houses" },
 	{ kind = "build", target = "wind_turbine", count = 1, reward = 3000, text = "Build a Wind Turbine" },
 	{ kind = "build", target = "water_tower", count = 1, reward = 3000, text = "Build a Water Tower" },

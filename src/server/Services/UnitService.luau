@@ -2,8 +2,12 @@
 	UnitService
 	Ground vehicles. Units are physics assemblies driven by AlignPosition /
 	AlignOrientation (server-owned) so they glide smoothly on every client.
-	They roll out at home, deploy to the mainland staging area through the
-	"tunnel", move in formation and fight automatically on the mainland.
+
+	They really drive: out of your city, over your bridge, across the central
+	battlefield and, with PvP on, over a rival's bridge into their city. Every
+	command is routed through the bridge waypoints. Units fight any enemy
+	vehicle in the same theatre (the battlefield, or a city being raided),
+	wear down strategic-point garrisons, and knock out buildings on raids.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,6 +16,7 @@ local Shared = ReplicatedStorage.Shared
 local Config = require(Shared.Config)
 local Grid = require(Shared.Util.Grid)
 local Net = require(Shared.Net)
+local Format = require(Shared.Util.Format)
 local Units = require(Shared.Catalog.Units)
 local ModelBuilder = require(Shared.ModelBuilder)
 local Nations = require(script.Parent.Nations)
@@ -28,9 +33,10 @@ export type Unit = {
 	root: BasePart,
 	align: AlignPosition,
 	orient: AlignOrientation,
-	location: string, -- "home" | "mainland"
+	location: string, -- "home" | "mainland" (battlefield + bridges) | "raid"
 	height: number,
 	lastShot: number,
+	path: { Vector3 },
 }
 
 local UnitService = {}
@@ -38,15 +44,14 @@ local S: { [string]: any }
 local folder: Folder
 local all: { [Unit]: boolean } = {}
 
-local HALF = Config.MainlandSize / 2
-
+-- Battlefield or a bridge (open warzone).
 function UnitService.inMainland(pos: Vector3): boolean
-	local d = pos - Config.MainlandOrigin
-	return math.abs(d.X) <= HALF and math.abs(d.Z) <= HALF
+	local zone = Grid.zoneAt(pos)
+	return zone == "mainland" or zone == "bridge"
 end
 
 function UnitService.stagingPos(n: Nation): Vector3
-	return Config.MainlandOrigin + Vector3.new(-1050 + (n.plotIndex - 1) * 300, 0, HALF - 110)
+	return Grid.landing(n.plotIndex)
 end
 
 function UnitService.cap(n: Nation): number
@@ -83,13 +88,13 @@ local function homePos(n: Nation, near: any?): Vector3
 	if not anchor and near then
 		anchor = S.BuildService.worldCFrame(n, near).Position
 	end
-	local base = anchor or (n.origin + Vector3.new(0, 0, Grid.PlotSize / 2 - 30))
+	local base = anchor or Grid.yard(n.plotIndex)
 	local rng = Random.new()
 	local p = base + Vector3.new(rng:NextNumber(-18, 18), 0, rng:NextNumber(-18, 18))
-	-- keep inside the plot
+	-- keep inside the island
 	local half = Grid.PlotSize / 2 - 6
-	local d = p - n.origin
-	return n.origin + Vector3.new(math.clamp(d.X, -half, half), 0, math.clamp(d.Z, -half, half))
+	local l = Grid.toLocal(n.plotIndex, p)
+	return (Grid.plotCFrame(n.plotIndex) * CFrame.new(math.clamp(l.X, -half, half), 0, math.clamp(l.Z, -half, half))).Position
 end
 
 local function setTarget(u: Unit, pos: Vector3)
@@ -101,13 +106,6 @@ local function setTarget(u: Unit, pos: Vector3)
 		u.orient.CFrame = CFrame.lookAt(Vector3.zero, flatDir.Unit)
 	end
 	u.model:SetAttribute("Moving", true)
-end
-
-local function teleport(u: Unit, pos: Vector3)
-	local cf = CFrame.new(pos.X, u.height, pos.Z) * u.root.CFrame.Rotation
-	u.model:PivotTo(cf)
-	u.root.AssemblyLinearVelocity = Vector3.zero
-	u.align.Position = cf.Position
 end
 
 function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: number?): Unit?
@@ -139,7 +137,7 @@ function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: 
 	align.Mode = Enum.PositionAlignmentMode.OneAttachment
 	align.Attachment0 = att
 	align.MaxForce = 1e7
-	align.MaxVelocity = def.speed
+	align.MaxVelocity = def.speed * Config.UnitSpeedScale
 	align.Responsiveness = 30
 	align.Parent = root
 	local orient = Instance.new("AlignOrientation")
@@ -190,6 +188,7 @@ function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: 
 		location = "home",
 		height = height,
 		lastShot = 0,
+		path = {},
 	}
 	n.units[unitUid] = u
 	all[u] = true
@@ -295,47 +294,153 @@ local function collect(n: Nation, uids: any, filter: ((Unit) -> boolean)?): { Un
 	return out
 end
 
-local function deploy(n: Nation, u: Unit)
-	local staging = UnitService.stagingPos(n)
-	local rng = Random.new()
-	teleport(u, staging + Vector3.new(rng:NextNumber(-30, 30), 0, rng:NextNumber(-20, 20)))
-	u.location = "mainland"
-	u.model:SetAttribute("Location", "mainland")
+---------------------------------------------------------------------------
+-- Routing: city -> yard -> gate -> bridge -> shore -> battlefield -> ...
+---------------------------------------------------------------------------
+local function flat(v: Vector3): Vector3
+	return Vector3.new(v.X, 0, v.Z)
 end
 
-local function recall(n: Nation, u: Unit)
-	teleport(u, homePos(n))
-	u.location = "home"
-	u.model:SetAttribute("Location", "home")
+-- Waypoints from `from` to `to` through the bridges (straight lines on land).
+function UnitService.route(from: Vector3, to: Vector3): { Vector3 }
+	local zf, i = Grid.zoneAt(from)
+	local zt, j = Grid.zoneAt(to)
+	local out: { Vector3 } = {}
+	local function add(p: Vector3)
+		table.insert(out, flat(p))
+	end
+	local function intoTarget()
+		if zt == "bridge" and j then
+			add(Grid.landing(j))
+			add(Grid.shore(j))
+		elseif zt == "plot" and j then
+			add(Grid.landing(j))
+			add(Grid.shore(j))
+			add(Grid.gate(j))
+			add(Grid.yard(j))
+		end
+	end
+	if zf == "plot" and i then
+		if zt == "plot" and j == i then
+			add(to)
+			return out
+		end
+		add(Grid.yard(i))
+		add(Grid.gate(i))
+		if zt == "bridge" and j == i then
+			add(to)
+			return out
+		end
+		add(Grid.shore(i))
+		add(Grid.landing(i))
+	elseif zf == "bridge" and i then
+		if zt == "plot" and j == i then
+			add(Grid.gate(i))
+			add(Grid.yard(i))
+			add(to)
+			return out
+		elseif zt == "bridge" and j == i then
+			add(to)
+			return out
+		end
+		add(Grid.shore(i))
+		add(Grid.landing(i))
+	end
+	intoTarget()
+	add(to)
+	-- drop waypoints that are behind us or doubled
+	local cleaned: { Vector3 } = {}
+	local last = flat(from)
+	for _, p in out do
+		if (p - last).Magnitude > 4 then
+			table.insert(cleaned, p)
+			last = p
+		end
+	end
+	return cleaned
+end
+
+local function drive(u: Unit, target: Vector3)
+	u.path = UnitService.route(u.root.CFrame.Position, target)
+	local first = table.remove(u.path, 1)
+	if first then
+		setTarget(u, first)
+	end
+end
+
+-- Theatre a unit is fighting in: "mainland" (battlefield + bridges), the
+-- index of the island it's on, or nil when safe at home.
+local function locate(u: Unit): (string, number?)
+	local zone, idx = Grid.zoneAt(u.root.CFrame.Position)
+	if zone == "plot" and idx == u.n.plotIndex then
+		return "home", idx
+	elseif zone == "plot" then
+		return "raid", idx
+	end
+	return "mainland", nil
+end
+
+local function updateLocation(u: Unit)
+	local loc = locate(u)
+	if loc ~= u.location then
+		u.location = loc
+		u.model:SetAttribute("Location", loc)
+	end
+end
+
+local function canRaid(n: Nation, defender: Nation?): (boolean, string?)
+	if not defender or not defender.ready then
+		return false, "Nobody lives there"
+	end
+	if not n.data.Pvp then
+		return false, "Turn PvP ON to invade other nations"
+	end
+	if not defender.data.Pvp then
+		return false, defender.player.DisplayName .. " has PvP OFF"
+	end
+	if S.CombatService.isShielded(defender) then
+		return false, defender.player.DisplayName .. " is protected by the new-nation shield"
+	end
+	return true, nil
+end
+
+local function formation(units: { Unit }, target: Vector3): { Vector3 }
+	local cols = math.ceil(math.sqrt(#units))
+	local spacing = 11
+	local out = {}
+	for i = 1, #units do
+		local row = (i - 1) // cols
+		local col = (i - 1) % cols
+		table.insert(out, target + Vector3.new((col - (cols - 1) / 2) * spacing, 0, (row - (cols - 1) / 2) * spacing))
+	end
+	return out
 end
 
 local function onCommand(player: Player, uids: any, target: any)
 	local n = Nations.get(player)
-	if not n or typeof(target) ~= "Vector3" then
+	if not n or typeof(target) ~= "Vector3" or target.X ~= target.X or math.abs(target.X) > 1e5 or math.abs(target.Z) > 1e5 then
 		return { ok = false, err = "Invalid request" }
 	end
 	local units = collect(n, uids)
 	if #units == 0 then
 		return { ok = false, err = "Select units first" }
 	end
-	local toMainland = UnitService.inMainland(target)
-	local toHome = Grid.insidePlot(n.origin, target, 0)
-	if not toMainland and not toHome then
-		return { ok = false, err = "Units can only move on your land or the mainland" }
+	local zone, idx = Grid.zoneAt(target)
+	if zone == "sea" then
+		return { ok = false, err = "Vehicles can't drive on water" }
 	end
-	-- simple square formation around the target
-	local cols = math.ceil(math.sqrt(#units))
-	local spacing = 11
-	for i, u in units do
-		if toMainland and u.location ~= "mainland" then
-			deploy(n, u)
-		elseif toHome and u.location == "mainland" then
-			recall(n, u)
+	if zone == "plot" and idx ~= n.plotIndex then
+		local owner = S.PlotService.ownerAt(target)
+		local ok, err = canRaid(n, owner and Nations.get(owner) or nil)
+		if not ok then
+			return { ok = false, err = err }
 		end
-		local row = (i - 1) // cols
-		local col = (i - 1) % cols
-		local offset = Vector3.new((col - (cols - 1) / 2) * spacing, 0, (row - (cols - 1) / 2) * spacing)
-		setTarget(u, target + offset)
+		n.pvpLockUntil = Nations.now() + Config.PvpToggleCooldown
+		n.shieldUntil = 0
+	end
+	local spots = formation(units, target)
+	for i, u in units do
+		drive(u, spots[i])
 	end
 	return { ok = true, count = #units }
 end
@@ -346,13 +451,14 @@ local function onDeploy(player: Player, uids: any)
 		return { ok = false }
 	end
 	local units = collect(n, uids, function(u)
-		return u.location ~= "mainland"
+		return u.location == "home"
 	end)
-	for _, u in units do
-		deploy(n, u)
+	local spots = formation(units, UnitService.stagingPos(n))
+	for i, u in units do
+		drive(u, spots[i])
 	end
 	if #units > 0 then
-		Nations.notify(player, ("%d units drove through the tunnel to the mainland"):format(#units), "good")
+		Nations.notify(player, ("%d vehicles rolling out over the bridge to the front"):format(#units), "good")
 	end
 	return { ok = #units > 0, count = #units, err = #units == 0 and "No units at home" or nil }
 end
@@ -366,36 +472,90 @@ local function onRecall(player: Player, uids: any)
 		return u.location ~= "home"
 	end)
 	for _, u in units do
-		recall(n, u)
+		drive(u, homePos(n))
 	end
-	return { ok = #units > 0, count = #units, err = #units == 0 and "No units on the mainland" or nil }
+	return { ok = #units > 0, count = #units, err = #units == 0 and "No units on the battlefield" or nil }
 end
 
----------------------------------------------------------------------------
--- Combat loop (mainland only)
----------------------------------------------------------------------------
-local STEP = 0.5
-
-local function combatStep()
-	local now = os.clock()
-	local units = UnitService.mainlandUnits()
-	for _, u in units do
-		if all[u] then
-			-- arrival
-			if u.model:GetAttribute("Moving") then
-				local d = (u.align.Position - u.root.CFrame.Position) * Vector3.new(1, 0, 1)
-				if d.Magnitude < 2 then
+-- Advance along the route; refresh where each unit is.
+local function moveStep()
+	for u in all do
+		if u.model:GetAttribute("Moving") then
+			local d = (u.align.Position - u.root.CFrame.Position) * Vector3.new(1, 0, 1)
+			if d.Magnitude < 6 then
+				local nextPoint = table.remove(u.path, 1)
+				if nextPoint then
+					setTarget(u, nextPoint)
+				elseif d.Magnitude < 2 then
 					u.model:SetAttribute("Moving", nil)
 				end
 			end
-			if u.def.dps > 0 then
+		end
+		updateLocation(u)
+	end
+end
+
+UnitService._moveStep = moveStep
+
+---------------------------------------------------------------------------
+-- Combat loop: battlefield fights, city raids and their defenders
+---------------------------------------------------------------------------
+local STEP = 0.5
+local raidNotice: { [Nation]: number } = {}
+
+-- Units fight when they're from different nations in the same theatre.
+local function theatre(u: Unit): string
+	local loc, idx = locate(u)
+	if loc == "mainland" then
+		return "mainland"
+	end
+	return "plot" .. tostring(idx)
+end
+
+local function raidAllowed(u: Unit, defender: Nation?): boolean
+	return defender ~= nil and u.n.data.Pvp == true and defender.data.Pvp == true and not S.CombatService.isShielded(defender)
+end
+
+local function buildingTarget(u: Unit, defender: Nation, pos: Vector3): any?
+	local best, bestD = nil, u.def.range
+	for _, b in defender.buildings do
+		if not b.damaged and not S.BuildService.isRoadDef(b.def) then
+			local c = S.BuildService.worldCFrame(defender, b).Position
+			local reach = math.min(b.def.size[1], b.def.size[2]) * Config.CellSize / 2
+			local d = math.max(0, (Vector3.new(c.X, 0, c.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude - reach)
+			if d <= bestD then
+				best, bestD = b, d
+			end
+		end
+	end
+	return best
+end
+
+local function combatStep()
+	local now = os.clock()
+	local byTheatre: { [string]: { Unit } } = {}
+	for u in all do
+		local t = theatre(u)
+		byTheatre[t] = byTheatre[t] or {}
+		table.insert(byTheatre[t], u)
+	end
+	for t, units in byTheatre do
+		local plotIdx = tonumber(string.match(t, "^plot(%d+)$"))
+		local owner = plotIdx and S.PlotService.ownerAt(Grid.plotOrigin(plotIdx)) or nil
+		local defender = owner and Nations.get(owner) or nil
+		for _, u in units do
+			if all[u] and u.def.dps > 0 then
 				local pos = u.root.CFrame.Position
+				-- in a city, only fight when the raid is legal
+				local legal = t == "mainland" or (defender ~= nil and (u.n == defender or raidAllowed(u, defender)))
 				local best, bestD = nil, u.def.range
-				for _, other in units do
-					if other.n ~= u.n and all[other] then
-						local d = (other.root.CFrame.Position - pos).Magnitude
-						if d <= bestD then
-							best, bestD = other, d
+				if legal then
+					for _, other in units do
+						if other.n ~= u.n and all[other] and (t == "mainland" or other.n == defender or u.n == defender) then
+							local d = (other.root.CFrame.Position - pos).Magnitude
+							if d <= bestD then
+								best, bestD = other, d
+							end
 						end
 					end
 				end
@@ -405,7 +565,7 @@ local function combatStep()
 						Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), best.root.CFrame.Position, u.def.range > 150)
 					end
 					UnitService.damage(best, u.def.dps * STEP, u.n)
-				else
+				elseif t == "mainland" then
 					local point = S.ConquestService.enemyPointInRange(pos, u.def.range, u.n.userId)
 					if point then
 						if now - u.lastShot > 1.2 then
@@ -413,6 +573,25 @@ local function combatStep()
 							Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), point.center + Vector3.new(0, 4, 0), u.def.range > 150)
 						end
 						S.ConquestService.damageGarrison(point, u.def.dps * STEP, u.n)
+					end
+				elseif defender and u.n ~= defender and raidAllowed(u, defender) then
+					local b = buildingTarget(u, defender, pos)
+					if b then
+						if now - u.lastShot > 1.2 then
+							u.lastShot = now
+							Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), S.BuildService.worldCFrame(defender, b).Position + Vector3.new(0, 4, 0), u.def.range > 150)
+						end
+						local wasDamaged = b.damaged
+						S.BuildService.damage(defender, b, u.def.dps * STEP * Config.RaidBuildingDamage)
+						if b.damaged and not wasDamaged then
+							local loot = math.floor(b.cost * Config.StrikeLootRate)
+							u.n.data.Cash += loot
+							Nations.notify(u.n.player, ("Your %s knocked out a %s%s"):format(u.def.name, b.def.name, loot > 0 and (" +" .. Format.cash(loot)) or ""), "good")
+						end
+						if (raidNotice[defender] or 0) < now then
+							raidNotice[defender] = now + 30
+							Nations.notify(defender.player, ("%s's vehicles are attacking your city!"):format(u.n.player.DisplayName), "bad")
+						end
 					end
 				end
 			end
@@ -434,6 +613,15 @@ function UnitService.start()
 	Net.handle("CommandUnits", onCommand, 6)
 	Net.handle("DeployUnits", onDeploy, 3)
 	Net.handle("RecallUnits", onRecall, 3)
+	task.spawn(function()
+		while true do
+			task.wait(0.2)
+			local ok, err = pcall(moveStep)
+			if not ok then
+				warn("[Units] move step failed: " .. tostring(err))
+			end
+		end
+	end)
 	task.spawn(function()
 		while true do
 			task.wait(STEP)

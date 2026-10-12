@@ -889,7 +889,7 @@ export type QuestDef = {
 }
 
 local Quests: { QuestDef } = {
-	{ kind = "build", target = "road", count = 4, reward = 2000, text = "Build 4 roads" },
+	{ kind = "build", target = "road", count = 4, reward = 2000, text = "Draw 32 studs of road" },
 	{ kind = "build", target = "small_house", count = 3, reward = 3000, text = "Build 3 Small Houses" },
 	{ kind = "build", target = "wind_turbine", count = 1, reward = 3000, text = "Build a Wind Turbine" },
 	{ kind = "build", target = "water_tower", count = 1, reward = 3000, text = "Build a Water Tower" },
@@ -1119,7 +1119,9 @@ return Units
           <Properties>
             <string name="Name">WarMap</string>
             <string name="Source"><![CDATA[--[[
-	Mainland strategic points. Offsets are relative to Config.MainlandOrigin.
+	Strategic points on the central battlefield. Offsets are relative to
+	Config.MainlandOrigin. The capital sits in the middle; the rest sit
+	between the bridge lanes so every nation has something on its way in.
 	Bonuses are paid to the owner every pay day / tick.
 ]]
 
@@ -1136,17 +1138,17 @@ export type PointDef = {
 local WarMap: { PointDef } = {
 	{ id = "capital", name = "CAPITAL", offset = Vector3.new(0, 0, 0), garrison = 2500, model = "city",
 		bonus = { income = 20000 }, bonusText = "+$20k per pay" },
-	{ id = "airport", name = "AIRPORT", offset = Vector3.new(-720, 0, 40), garrison = 900, model = "airport",
+	{ id = "airport", name = "AIRPORT", offset = Vector3.new(-573, 0, -237), garrison = 900, model = "airport",
 		bonus = { income = 6000, rp = 20 }, bonusText = "+$6k per pay, +20 RP/min" },
-	{ id = "oil_field", name = "OIL FIELD", offset = Vector3.new(640, 0, -380), garrison = 700, model = "oilField",
+	{ id = "oil_field", name = "OIL FIELD", offset = Vector3.new(554, 0, 230), garrison = 700, model = "oilField",
 		bonus = { oil = 600 }, bonusText = "+600 oil/min" },
-	{ id = "nuclear_plant", name = "NUCLEAR POWER PLANT", offset = Vector3.new(120, 0, -720), garrison = 1100,
+	{ id = "nuclear_plant", name = "NUCLEAR POWER PLANT", offset = Vector3.new(237, 0, -573), garrison = 1100,
 		model = "nuclear", bonus = { power = 400 }, bonusText = "+400 MW power" },
-	{ id = "city", name = "CITY", offset = Vector3.new(520, 0, 330), garrison = 1000, model = "city",
+	{ id = "city", name = "CITY", offset = Vector3.new(480, 0, -199), garrison = 1000, model = "city",
 		bonus = { income = 9000 }, bonusText = "+$9k per pay" },
-	{ id = "port", name = "PORT", offset = Vector3.new(-320, 0, 760), garrison = 800, model = "port",
+	{ id = "port", name = "PORT", offset = Vector3.new(237, 0, 573), garrison = 800, model = "port",
 		bonus = { steel = 300 }, bonusText = "+300 steel/min" },
-	{ id = "military_base", name = "MILITARY BASE", offset = Vector3.new(-660, 0, -660), garrison = 1300,
+	{ id = "military_base", name = "MILITARY BASE", offset = Vector3.new(-554, 0, 230), garrison = 1300,
 		model = "base", bonus = { rp = 60 }, bonusText = "+60 RP/min" },
 }
 
@@ -1264,16 +1266,18 @@ Config.StudioFreePurchases = true
 Config.GroupId = 0
 
 ---------------------------------------------------------------------------
--- World / grid
+-- World layout
+-- The central battlefield (the "mainland") sits in the middle of the map.
+-- Every nation's island sits on a ring around it, facing the centre, and
+-- is joined to it by its own bridge.
 ---------------------------------------------------------------------------
-Config.CellSize = 4 -- studs per grid cell
-Config.PlotCells = 100 -- plot is PlotCells x PlotCells cells (400 x 400 studs)
-Config.PlotGap = 140 -- sand + sea between plots
+Config.CellSize = 4 -- studs per cell: catalog footprints + the optional GRID snap
+Config.PlotSize = 480 -- studs; each island's free-build area (square)
 Config.MaxPlots = 8
-Config.PlotRowLength = 4
-Config.HomelandOrigin = Vector3.new(0, 0, 0)
-Config.MainlandOrigin = Vector3.new(0, 0, 3200)
-Config.MainlandSize = 2400
+Config.MainlandOrigin = Vector3.new(0, 0, 0)
+Config.MainlandRadius = 1000 -- round continent (sand edge)
+Config.PlotRingRadius = 1440 -- island centres from the middle
+Config.BridgeWidth = 30
 
 ---------------------------------------------------------------------------
 -- Economy
@@ -1299,6 +1303,8 @@ Config.TruckCapacity = 250
 Config.TruckSpeed = 28 -- studs per second
 Config.UndoWindow = 45 -- seconds an action can be undone for a full refund
 Config.MaxQueuePerFactory = 5
+Config.MaxBuildings = 900 -- per nation (road segments included)
+Config.RoadMaxLength = 240 -- longest single road segment, studs
 
 ---------------------------------------------------------------------------
 -- Combat
@@ -1315,6 +1321,8 @@ Config.CaptureRadius = 70
 Config.CaptureTime = 100 -- capture points needed (units add their capture power per second)
 Config.GarrisonRegen = 4 -- garrison HP regenerated per second
 Config.MaxUnitsPerPlayer = 40
+Config.UnitSpeedScale = 1.6 -- vehicles drive the catalog speed x this
+Config.RaidBuildingDamage = 1.5 -- vehicle dps multiplier against buildings
 
 -- Colour used for each plot slot's nation on the war map.
 Config.NationColors = {
@@ -2535,6 +2543,36 @@ function ModelBuilder.setConstruction(model: Model, on: boolean)
 	end
 end
 
+-- Free-form road segment along local Z (width x len). Round caps at both
+-- ends fill the joints, so segments meeting at any angle read as one road.
+-- A single tile (len <= width) stays square, like the GRID-mode road tile.
+function ModelBuilder.roadSegment(width: number, len: number, seed: number?): Model
+	local model = Instance.new("Model")
+	model.Name = "road"
+	M = model
+	local lift = ((seed or 0) % 5) * 0.012 -- overlapping junctions don't z-fight
+	local h = 0.3 + lift
+	local base = blk(width, h, len, 0, 0, 0, C.asphalt)
+	base.Name = "Base"
+	model.PrimaryPart = base
+	if len > width + 0.01 then
+		for _, z in { -len / 2, len / 2 } do
+			local cap = cyl(h, width, 0, 0, z, C.asphalt)
+			cap.Name = "Cap"
+		end
+	end
+	if len > 3 then
+		local lineLen = math.max(len - width, 1)
+		local centre = noCollide(blk(0.35, 0.02, lineLen, 0, h, 0, C.line))
+		centre.CanQuery = false
+		for _, side in { -1, 1 } do
+			local edge = noCollide(blk(0.25, 0.02, lineLen, side * (width / 2 - 0.7), h, 0, C.line))
+			edge.CanQuery = false
+		end
+	end
+	return model
+end
+
 -- Damaged by a strike: scorched colours + smoke until repaired.
 function ModelBuilder.setDamaged(model: Model, on: boolean)
 	for _, d in model:GetDescendants() do
@@ -2600,6 +2638,7 @@ local Net = {}
 Net.Functions = {
 	"PlaceBuilding",
 	"PlaceMany",
+	"PlaceRoad",
 	"DeleteBuilding",
 	"MoveBuilding",
 	"Undo",
@@ -2941,6 +2980,175 @@ return Flag
         </Item>
         <Item class="ModuleScript" referent="23">
           <Properties>
+            <string name="Name">Footprint</string>
+            <string name="Source"><![CDATA[--[[
+	Footprint
+	Rotated rectangles on an island (local studs) for free-form building:
+	overlap tests (separating axes), "is it on my land", road reach and a
+	spatial hash so a city of hundreds of buildings checks in microseconds.
+	Shared so the placement ghost and server validation always agree.
+]]
+
+local Config = require(script.Parent.Parent.Config)
+
+local Footprint = {}
+
+-- Centre (x, z), half extents and the yaw's cos/sin. Local X axis = (c, -s),
+-- local Z axis = (s, c), matching CFrame.Angles(0, yaw, 0).
+export type Rect = { x: number, z: number, hw: number, hd: number, c: number, s: number }
+
+function Footprint.rect(x: number, z: number, w: number, d: number, angle: number): Rect
+	local a = math.rad(angle)
+	return { x = x, z = z, hw = w / 2, hd = d / 2, c = math.cos(a), s = math.sin(a) }
+end
+
+-- Footprint size (studs) of a catalog building; roads use their segment length.
+function Footprint.size(def: any, len: number?): (number, number)
+	local cell = Config.CellSize
+	return def.size[1] * cell, len or def.size[2] * cell
+end
+
+function Footprint.corners(r: Rect): { Vector2 }
+	local out = {}
+	for _, sx in { -1, 1 } do
+		for _, sz in { -1, 1 } do
+			local lx, lz = sx * r.hw, sz * r.hd
+			table.insert(out, Vector2.new(r.x + lx * r.c + lz * r.s, r.z - lx * r.s + lz * r.c))
+		end
+	end
+	return out
+end
+
+-- World-axis bounds (local island axes).
+function Footprint.bounds(r: Rect): (number, number, number, number)
+	local ex = math.abs(r.hw * r.c) + math.abs(r.hd * r.s)
+	local ez = math.abs(r.hw * r.s) + math.abs(r.hd * r.c)
+	return r.x - ex, r.z - ez, r.x + ex, r.z + ez
+end
+
+local function radius(r: Rect, ax: number, az: number): number
+	return r.hw * math.abs(r.c * ax - r.s * az) + r.hd * math.abs(r.s * ax + r.c * az)
+end
+
+-- True when the rectangles overlap by more than `gap` studs (touching is fine).
+function Footprint.overlaps(a: Rect, b: Rect, gap: number?): boolean
+	local g = gap or 0.05
+	local dx, dz = b.x - a.x, b.z - a.z
+	for _, axis in { { a.c, -a.s }, { a.s, a.c }, { b.c, -b.s }, { b.s, b.c } } do
+		local ax, az = axis[1], axis[2]
+		local dist = math.abs(dx * ax + dz * az)
+		if dist >= radius(a, ax, az) + radius(b, ax, az) - g then
+			return false
+		end
+	end
+	return true
+end
+
+-- Every corner within +-half of the island centre.
+function Footprint.inside(r: Rect, half: number): boolean
+	local x0, z0, x1, z1 = Footprint.bounds(r)
+	return x0 >= -half and z0 >= -half and x1 <= half and z1 <= half
+end
+
+-- Grow a rectangle on every side (road reach checks).
+function Footprint.grow(r: Rect, by: number): Rect
+	return { x = r.x, z = r.z, hw = r.hw + by, hd = r.hd + by, c = r.c, s = r.s }
+end
+
+-- Point-in-rectangle (local studs).
+function Footprint.contains(r: Rect, x: number, z: number, pad: number?): boolean
+	local dx, dz = x - r.x, z - r.z
+	local lx = dx * r.c - dz * r.s
+	local lz = dx * r.s + dz * r.c
+	local p = pad or 0
+	return math.abs(lx) <= r.hw + p and math.abs(lz) <= r.hd + p
+end
+
+-- A road segment from A to B: centre, yaw (local Z runs A -> B) and length.
+function Footprint.segment(ax: number, az: number, bx: number, bz: number): (number, number, number, number)
+	local dx, dz = bx - ax, bz - az
+	local len = math.sqrt(dx * dx + dz * dz)
+	local angle = math.deg(math.atan2(dx, dz)) % 360
+	return (ax + bx) / 2, (az + bz) / 2, angle, len
+end
+
+-- A road segment's rectangle including its round end caps (half a width
+-- past each end), used when checking buildings against roads. Single tiles
+-- (no longer than they are wide) are square and have no caps.
+function Footprint.capped(r: Rect): Rect
+	if r.hd <= r.hw + 0.005 then
+		return r
+	end
+	return { x = r.x, z = r.z, hw = r.hw, hd = r.hd + r.hw, c = r.c, s = r.s }
+end
+
+-- Endpoints of a segment rectangle (along its local Z).
+function Footprint.ends(r: Rect): (Vector2, Vector2)
+	local ox, oz = r.hd * r.s, r.hd * r.c
+	return Vector2.new(r.x - ox, r.z - oz), Vector2.new(r.x + ox, r.z + oz)
+end
+
+---------------------------------------------------------------------------
+-- Spatial hash: bucket -> set of ids
+---------------------------------------------------------------------------
+local BUCKET = 32
+
+export type Hash = { [number]: { [number]: boolean } }
+
+local function keysFor(r: Rect, pad: number): { number }
+	local x0, z0, x1, z1 = Footprint.bounds(r)
+	local out = {}
+	for bx = math.floor((x0 - pad) / BUCKET), math.floor((x1 + pad) / BUCKET) do
+		for bz = math.floor((z0 - pad) / BUCKET), math.floor((z1 + pad) / BUCKET) do
+			table.insert(out, (bx + 512) * 1024 + (bz + 512))
+		end
+	end
+	return out
+end
+
+function Footprint.hashAdd(h: Hash, id: number, r: Rect)
+	for _, k in keysFor(r, 0) do
+		local set = h[k]
+		if not set then
+			set = {}
+			h[k] = set
+		end
+		set[id] = true
+	end
+end
+
+function Footprint.hashRemove(h: Hash, id: number, r: Rect)
+	for _, k in keysFor(r, 0) do
+		local set = h[k]
+		if set then
+			set[id] = nil
+			if next(set) == nil then
+				h[k] = nil
+			end
+		end
+	end
+end
+
+-- Ids whose buckets touch `r` grown by `pad` (candidates; test them exactly).
+function Footprint.hashQuery(h: Hash, r: Rect, pad: number?): { [number]: boolean }
+	local out = {}
+	for _, k in keysFor(r, pad or 0) do
+		local set = h[k]
+		if set then
+			for id in set do
+				out[id] = true
+			end
+		end
+	end
+	return out
+end
+
+return Footprint
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="24">
+          <Properties>
             <string name="Name">Format</string>
             <string name="Source"><![CDATA[--[[
 	Format
@@ -3031,83 +3239,176 @@ return Format
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">Grid</string>
             <string name="Source"><![CDATA[--[[
 	Grid
-	Plot layout and cell <-> world conversion. Shared so the client placement
-	ghost and the server validation always agree.
+	World layout shared by client and server:
+
+	  * the central battlefield (round continent at Config.MainlandOrigin)
+	  * eight nation islands on a ring around it, each rotated so its front
+	    edge (local -Z) faces the centre
+	  * a bridge from every island's front edge to the battlefield
+
+	Buildings are stored in island-local studs (x, z) plus a yaw in degrees,
+	so placement is free-form; Grid only converts between spaces and answers
+	"where is this point?" questions.
 ]]
 
 local Config = require(script.Parent.Parent.Config)
 
 local Grid = {}
 
-local CELL = Config.CellSize
-local N = Config.PlotCells
+Grid.CellSize = Config.CellSize
+Grid.PlotSize = Config.PlotSize
+Grid.Rim = 34 -- sand beach around each island
 
-Grid.CellSize = CELL
-Grid.PlotCells = N
-Grid.PlotSize = N * CELL
+local CENTER = Config.MainlandOrigin
+local RING = Config.PlotRingRadius
+local frames: { [number]: CFrame } = {}
 
--- World-space center of plot `index` (1-based) at ground height.
+-- Yaw of island `index` around the centre (radians).
+function Grid.plotAngle(index: number): number
+	return (index - 1) * math.pi / 4
+end
+
+-- Unit vector from the centre towards island `index`.
+function Grid.direction(index: number): Vector3
+	local a = Grid.plotAngle(index)
+	return Vector3.new(math.sin(a), 0, math.cos(a))
+end
+
 function Grid.plotOrigin(index: number): Vector3
-	local i = index - 1
-	local row = i // Config.PlotRowLength
-	local col = i % Config.PlotRowLength
-	local pitch = Grid.PlotSize + Config.PlotGap
-	local width = (Config.PlotRowLength - 1) * pitch
-	return Config.HomelandOrigin + Vector3.new(col * pitch - width / 2, 0, row * pitch)
+	return CENTER + Grid.direction(index) * RING
 end
 
--- Footprint (in cells) after rotation. r = number of quarter turns.
-function Grid.footprint(w: number, d: number, r: number): (number, number)
-	if r % 2 == 1 then
-		return d, w
+-- Island frame: origin at its centre, LookVector (-Z) pointing at the battlefield.
+function Grid.plotCFrame(index: number): CFrame
+	local cf = frames[index]
+	if not cf then
+		cf = CFrame.new(Grid.plotOrigin(index)) * CFrame.Angles(0, Grid.plotAngle(index), 0)
+		frames[index] = cf
 	end
-	return w, d
+	return cf
 end
 
--- Center of a footprint whose min corner is at cell (x, z).
-function Grid.cellToWorld(origin: Vector3, x: number, z: number, fw: number, fd: number): Vector3
-	return origin + Vector3.new((x + fw / 2 - N / 2) * CELL, 0, (z + fd / 2 - N / 2) * CELL)
+-- Island-local (x, z, yaw degrees) -> world CFrame at ground level.
+function Grid.toWorld(index: number, x: number, z: number, angle: number?): CFrame
+	return Grid.plotCFrame(index) * CFrame.new(x, 0, z) * CFrame.Angles(0, math.rad(angle or 0), 0)
 end
 
-function Grid.cframeFor(origin: Vector3, x: number, z: number, w: number, d: number, r: number): CFrame
-	local fw, fd = Grid.footprint(w, d, r)
-	local pos = Grid.cellToWorld(origin, x, z, fw, fd)
-	return CFrame.new(pos) * CFrame.Angles(0, math.rad(90 * r), 0)
+-- World position -> island-local position (Y is kept as-is).
+function Grid.toLocal(index: number, world: Vector3): Vector3
+	return Grid.plotCFrame(index):PointToObjectSpace(world)
 end
 
--- Min corner cell for a footprint centered as close as possible to `world`.
-function Grid.worldToCell(origin: Vector3, world: Vector3, fw: number, fd: number): (number, number)
-	local local_ = world - origin
-	local x = math.floor(local_.X / CELL + N / 2 - fw / 2 + 0.5)
-	local z = math.floor(local_.Z / CELL + N / 2 - fd / 2 + 0.5)
-	return x, z
+-- World yaw (degrees) -> island-local yaw.
+function Grid.localYaw(index: number, worldYaw: number): number
+	return (worldYaw - math.deg(Grid.plotAngle(index))) % 360
 end
 
-function Grid.inBounds(x: number, z: number, fw: number, fd: number): boolean
-	return x >= 0 and z >= 0 and x + fw <= N and z + fd <= N
-end
-
-function Grid.key(x: number, z: number): number
-	return z * N + x
-end
-
--- Is a world position inside the plot centered at origin (with optional margin)?
-function Grid.insidePlot(origin: Vector3, pos: Vector3, margin: number?): boolean
+function Grid.insidePlot(index: number, pos: Vector3, margin: number?): boolean
+	local l = Grid.toLocal(index, pos)
 	local half = Grid.PlotSize / 2 + (margin or 0)
-	local d = pos - origin
-	return math.abs(d.X) <= half and math.abs(d.Z) <= half
+	return math.abs(l.X) <= half and math.abs(l.Z) <= half
+end
+
+-- Which island contains `pos` (the beach counts when margin is given)?
+function Grid.plotAt(pos: Vector3, margin: number?): number?
+	for i = 1, Config.MaxPlots do
+		if Grid.insidePlot(i, pos, margin) then
+			return i
+		end
+	end
+	return nil
+end
+
+-- Island end of the bridge (outer edge of the beach, centre of the front).
+function Grid.gate(index: number): Vector3
+	return (Grid.plotCFrame(index) * CFrame.new(0, 0, -(Grid.PlotSize / 2 + Grid.Rim))).Position
+end
+
+-- Inside the front edge of the island: where vehicles gather before crossing.
+function Grid.yard(index: number): Vector3
+	return (Grid.plotCFrame(index) * CFrame.new(0, 0, -(Grid.PlotSize / 2 - 26))).Position
+end
+
+-- Battlefield end of the bridge (on the shore).
+function Grid.shore(index: number): Vector3
+	return CENTER + Grid.direction(index) * Config.MainlandRadius
+end
+
+-- Staging area just inland from the bridge on the battlefield.
+function Grid.landing(index: number): Vector3
+	return CENTER + Grid.direction(index) * (Config.MainlandRadius - 90)
+end
+
+local function flat(p: Vector3): Vector3
+	return Vector3.new(p.X, 0, p.Z)
+end
+
+function Grid.inMainland(pos: Vector3, margin: number?): boolean
+	return (flat(pos) - flat(CENTER)).Magnitude <= Config.MainlandRadius + (margin or 0)
+end
+
+-- Index of the bridge whose deck contains `pos`.
+function Grid.bridgeAt(pos: Vector3): number?
+	local p = flat(pos)
+	for i = 1, Config.MaxPlots do
+		local a, b = flat(Grid.shore(i)), flat(Grid.gate(i))
+		local ab = b - a
+		local t = (p - a):Dot(ab) / ab:Dot(ab)
+		if t >= -0.05 and t <= 1.05 then
+			local closest = a + ab * math.clamp(t, 0, 1)
+			if (p - closest).Magnitude <= Config.BridgeWidth / 2 + 4 then
+				return i
+			end
+		end
+	end
+	return nil
+end
+
+-- "plot" (index), "bridge" (index), "mainland" or "sea".
+function Grid.zoneAt(pos: Vector3): (string, number?)
+	local plot = Grid.plotAt(pos, 2)
+	if plot then
+		return "plot", plot
+	end
+	if Grid.inMainland(pos) then
+		return "mainland", nil
+	end
+	local bridge = Grid.bridgeAt(pos)
+	if bridge then
+		return "bridge", bridge
+	end
+	local beach = Grid.plotAt(pos, Grid.Rim)
+	if beach then
+		return "plot", beach
+	end
+	return "sea", nil
+end
+
+-- GRID snap: put a footprint's edges on the cell grid (quarter-turn yaws).
+function Grid.snapLocal(x: number, z: number, w: number, d: number, angle: number): (number, number)
+	local quarter = math.floor(angle / 90 + 0.5) % 2
+	local fw, fd = w, d
+	if quarter == 1 then
+		fw, fd = d, w
+	end
+	local cell = Grid.CellSize
+	local function snap(v: number, size: number): number
+		local min = math.floor((v - size / 2) / cell + 0.5) * cell
+		return min + size / 2
+	end
+	return snap(x, fw), snap(z, fd)
 end
 
 return Grid
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">Rank</string>
             <string name="Source"><![CDATA[--[[
@@ -3154,7 +3455,7 @@ return Rank
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="27">
           <Properties>
             <string name="Name">Unlocks</string>
             <string name="Source"><![CDATA[--[[
@@ -3188,15 +3489,15 @@ return Unlocks
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="27">
+  <Item class="ServerScriptService" referent="28">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="28">
+    <Item class="Folder" referent="29">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Script" referent="29">
+      <Item class="Script" referent="30">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -3310,6 +3611,7 @@ local function onLoaded(player: Player, data: { [string]: any })
 		data = data,
 		plotIndex = plot.index,
 		origin = plot.origin,
+		frame = plot.frame,
 		folder = plot.buildings,
 		buildings = {},
 		grid = {},
@@ -3397,18 +3699,21 @@ print(("[%s] server ready"):format(Config.GameName))
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="30">
+      <Item class="Folder" referent="31">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="31">
+        <Item class="ModuleScript" referent="32">
           <Properties>
             <string name="Name">BuildService</string>
             <string name="Source"><![CDATA[--[[
 	BuildService
-	Server-authoritative placement: validates every request against the grid,
+	Server-authoritative free-form placement. Buildings sit anywhere on your
+	island at any angle (island-local studs + yaw), roads are drawn as
+	segments of any length and direction, and every request is validated
+	against footprint overlap (Footprint SAT + spatial hash), your land,
 	cash, research, passes and limits. Owns building runtime objects, their
-	models, construction timers, road connectivity, undo, move and repair.
+	models, construction timers, road access, undo, move and repair.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3417,6 +3722,7 @@ local TextService = game:GetService("TextService")
 local Shared = ReplicatedStorage.Shared
 local Config = require(Shared.Config)
 local Grid = require(Shared.Util.Grid)
+local Footprint = require(Shared.Util.Footprint)
 local Unlocks = require(Shared.Util.Unlocks)
 local Buildings = require(Shared.Catalog.Buildings)
 local ModelBuilder = require(Shared.ModelBuilder)
@@ -3429,40 +3735,75 @@ type BRuntime = Nations.BRuntime
 local BuildService = {}
 local S: { [string]: any }
 
----------------------------------------------------------------------------
--- Grid helpers
----------------------------------------------------------------------------
-local function footprintOf(def, r: number): (number, number)
-	return Grid.footprint(def.size[1], def.size[2], r)
-end
+local HALF = Grid.PlotSize / 2 - 0.5 -- buildable half-extent on an island
+local ROAD_REACH = 3 -- a building within this many studs of a road is connected
 
-local function cellsOf(def, x: number, z: number, r: number): { number }
-	local fw, fd = footprintOf(def, r)
-	local out = {}
-	for cx = x, x + fw - 1 do
-		for cz = z, z + fd - 1 do
-			table.insert(out, Grid.key(cx, cz))
-		end
-	end
-	return out
-end
-
+---------------------------------------------------------------------------
+-- Footprints
+---------------------------------------------------------------------------
 local function isRoadDef(def): boolean
 	return def.id == "road" or def.id == "plaza"
 end
+BuildService.isRoadDef = isRoadDef
 
-function BuildService.canPlace(n: Nation, def, x: number, z: number, r: number, ignoreUid: number?): (boolean, string?)
-	if typeof(x) ~= "number" or typeof(z) ~= "number" or x ~= x or z ~= z then
+-- Segment roads stretch; everything else uses its catalog footprint.
+local function isSegment(def): boolean
+	return def.id == "road"
+end
+
+local function rectFor(def, x: number, z: number, angle: number, len: number?): Footprint.Rect
+	local w, d = Footprint.size(def, len)
+	return Footprint.rect(x, z, w, d, angle)
+end
+
+local function rectOf(b: BRuntime): Footprint.Rect
+	return rectFor(b.def, b.x, b.z, b.r, b.len)
+end
+
+-- Price of a placement (roads are charged per tile of length).
+local function costFor(def, len: number?): number
+	if len and isSegment(def) then
+		return def.cost * math.max(1, math.ceil(len / (def.size[2] * Config.CellSize) - 0.01))
+	end
+	return def.cost
+end
+
+local function finite(v: any): boolean
+	return typeof(v) == "number" and v == v and math.abs(v) < 1e4
+end
+
+local function cleanAngle(a: any): number
+	if not finite(a) then
+		return 0
+	end
+	return (math.floor(a * 2 + 0.5) / 2) % 360
+end
+
+local function cleanPos(v: number): number
+	return math.floor(v * 20 + 0.5) / 20
+end
+
+function BuildService.canPlace(n: Nation, def, x: number, z: number, angle: number, len: number?, ignoreUid: number?): (boolean, string?)
+	if not finite(x) or not finite(z) or not finite(angle) then
 		return false, "Invalid position"
 	end
-	local fw, fd = footprintOf(def, r)
-	if not Grid.inBounds(x, z, fw, fd) then
+	local rect = rectFor(def, x, z, angle, len)
+	if not Footprint.inside(rect, HALF) then
 		return false, "Outside your land"
 	end
-	for _, key in cellsOf(def, x, z, r) do
-		local occ = n.grid[key]
-		if occ and occ ~= ignoreUid then
-			return false, "Space is taken"
+	local ground = isRoadDef(def)
+	-- a road's round end caps count against buildings
+	local mine = isSegment(def) and Footprint.capped(rect) or rect
+	for uid in Footprint.hashQuery(n.grid, mine) do
+		local other = n.buildings[uid]
+		if other and uid ~= ignoreUid and not (ground and isRoadDef(other.def)) then
+			local theirs = rectOf(other)
+			if isSegment(other.def) then
+				theirs = Footprint.capped(theirs)
+			end
+			if Footprint.overlaps(mine, theirs) then
+				return false, (isRoadDef(other.def) and not ground) and "Can't build on a road" or "Space is taken"
+			end
 		end
 	end
 	return true, nil
@@ -3472,23 +3813,13 @@ local function connectedAt(n: Nation, b: BRuntime): boolean
 	if not b.def.needsRoad or isRoadDef(b.def) then
 		return true
 	end
-	local fw, fd = footprintOf(b.def, b.r)
-	local function isRoad(cx: number, cz: number): boolean
-		if cx < 0 or cz < 0 or cx >= Grid.PlotCells or cz >= Grid.PlotCells then
-			return false
-		end
-		local uid = n.grid[Grid.key(cx, cz)]
-		local other = uid and n.buildings[uid]
-		return other ~= nil and isRoadDef(other.def) and other.finishAt == nil
-	end
-	for cx = b.x, b.x + fw - 1 do
-		if isRoad(cx, b.z - 1) or isRoad(cx, b.z + fd) then
-			return true
-		end
-	end
-	for cz = b.z, b.z + fd - 1 do
-		if isRoad(b.x - 1, cz) or isRoad(b.x + fw, cz) then
-			return true
+	local reach = Footprint.grow(rectOf(b), ROAD_REACH)
+	for uid in Footprint.hashQuery(n.grid, reach) do
+		local other = n.buildings[uid]
+		if other and other ~= b and isRoadDef(other.def) and other.finishAt == nil then
+			if Footprint.overlaps(reach, rectOf(other), 0) then
+				return true
+			end
 		end
 	end
 	return false
@@ -3519,16 +3850,26 @@ local function applyBillboard(n: Nation, b: BRuntime)
 end
 
 function BuildService.worldCFrame(n: Nation, b: BRuntime): CFrame
-	return Grid.cframeFor(n.origin, b.x, b.z, b.def.size[1], b.def.size[2], b.r)
+	return Grid.toWorld(n.plotIndex, b.x, b.z, b.r)
 end
 
 local function spawnModel(n: Nation, b: BRuntime)
 	if b.model then
 		b.model:Destroy()
 	end
-	local model = ModelBuilder.building(b.def)
+	local model
+	if isSegment(b.def) and b.len then
+		model = ModelBuilder.roadSegment(b.def.size[1] * Config.CellSize, b.len, b.uid)
+	else
+		model = ModelBuilder.building(b.def)
+	end
 	model.Name = tostring(b.uid)
 	model:PivotTo(BuildService.worldCFrame(n, b))
+	-- placement data for the client ghost / move tool
+	model:SetAttribute("PX", b.x)
+	model:SetAttribute("PZ", b.z)
+	model:SetAttribute("Angle", b.r)
+	model:SetAttribute("Len", b.len)
 	model:SetAttribute("Uid", b.uid)
 	model:SetAttribute("BuildingId", b.id)
 	model:SetAttribute("OwnerId", n.userId)
@@ -3553,7 +3894,7 @@ end
 ---------------------------------------------------------------------------
 -- Runtime creation
 ---------------------------------------------------------------------------
-local function newRuntime(n: Nation, def, x: number, z: number, r: number, uid: number?): BRuntime
+local function newRuntime(n: Nation, def, x: number, z: number, r: number, len: number?, uid: number?): BRuntime
 	local id = uid
 	if not id then
 		id = n.data.NextUid
@@ -3566,6 +3907,8 @@ local function newRuntime(n: Nation, def, x: number, z: number, r: number, uid: 
 		x = x,
 		z = z,
 		r = r,
+		len = len,
+		cost = costFor(def, len),
 		model = nil,
 		finishAt = nil,
 		startAt = nil,
@@ -3592,39 +3935,45 @@ end
 
 local function insert(n: Nation, b: BRuntime)
 	n.buildings[b.uid] = b
-	for _, key in cellsOf(b.def, b.x, b.z, b.r) do
-		n.grid[key] = b.uid
-	end
+	Footprint.hashAdd(n.grid, b.uid, rectOf(b))
 end
 
 local function unindex(n: Nation, b: BRuntime)
-	for _, key in cellsOf(b.def, b.x, b.z, b.r) do
-		if n.grid[key] == b.uid then
-			n.grid[key] = nil
-		end
+	Footprint.hashRemove(n.grid, b.uid, rectOf(b))
+end
+
+local function countBuildings(n: Nation): number
+	local c = 0
+	for _ in n.buildings do
+		c += 1
 	end
+	return c
 end
 
 function BuildService.access(n: Nation): Unlocks.Access
 	return { researched = n.data.Researched, passes = n.passes }
 end
 
--- Core placement used by requests, undo and loading.
-local function placeInternal(n: Nation, def, x: number, z: number, r: number, charge: boolean): (boolean, string?, BRuntime?)
-	local ok, err = BuildService.canPlace(n, def, x, z, r)
+-- Core placement used by requests and undo.
+local function placeInternal(n: Nation, def, x: number, z: number, r: number, len: number?, charge: boolean): (boolean, string?, BRuntime?)
+	local ok, err = BuildService.canPlace(n, def, x, z, r, len)
 	if not ok then
 		return false, err, nil
 	end
 	if def.max and Nations.countAll(n, def.id) >= def.max then
 		return false, ("Limit reached (max %d)"):format(def.max), nil
 	end
+	if countBuildings(n) >= Config.MaxBuildings then
+		return false, ("Your nation is at the %d building limit"):format(Config.MaxBuildings), nil
+	end
+	local cost = costFor(def, len)
 	if charge then
-		if n.data.Cash < def.cost then
+		if n.data.Cash < cost then
 			return false, "Not enough cash", nil
 		end
-		n.data.Cash -= def.cost
+		n.data.Cash -= cost
 	end
-	local b = newRuntime(n, def, x, z, r)
+	local b = newRuntime(n, def, x, z, r, len)
 	local time = def.buildTime / Nations.speed(n)
 	if time > 0 then
 		b.startAt = Nations.now()
@@ -3717,13 +4066,33 @@ end
 ---------------------------------------------------------------------------
 -- Load / save
 ---------------------------------------------------------------------------
+-- Old saves stored grid cells (min corner on a 100-cell plot) and quarter
+-- turns; convert them to island-local studs + degrees.
+local OLD_CELLS = 100
+
+local function migrate(def, s): (number, number, number)
+	local r = s.r or 0
+	local fw, fd = def.size[1], def.size[2]
+	if r % 2 == 1 then
+		fw, fd = fd, fw
+	end
+	local cell = Config.CellSize
+	return (s.x + fw / 2 - OLD_CELLS / 2) * cell, (s.z + fd / 2 - OLD_CELLS / 2) * cell, (r % 4) * 90
+end
+
 function BuildService.loadNation(n: Nation)
 	for _, s in n.data.Buildings do
 		local def = Buildings.get(s.id)
-		if def then
-			local r = s.r or 0
-			if BuildService.canPlace(n, def, s.x, s.z, r) then
-				local b = newRuntime(n, def, s.x, s.z, r, s.u)
+		if def and finite(s.x) and finite(s.z) then
+			local x, z, r, len
+			if s.a ~= nil then
+				x, z, r, len = s.x, s.z, cleanAngle(s.a), s.L
+			else
+				x, z, r = migrate(def, s)
+				len = isSegment(def) and def.size[2] * Config.CellSize or nil
+			end
+			if BuildService.canPlace(n, def, x, z, r, len) then
+				local b = newRuntime(n, def, x, z, r, len, s.u)
 				b.finishAt = s.f
 				b.startAt = s.st
 				b.damaged = s.d == true
@@ -3780,7 +4149,8 @@ function BuildService.serialize(n: Nation)
 			id = b.id,
 			x = b.x,
 			z = b.z,
-			r = b.r ~= 0 and b.r or nil,
+			a = b.r,
+			L = b.len,
 			f = b.finishAt,
 			st = b.startAt,
 			d = b.damaged or nil,
@@ -3817,7 +4187,7 @@ function BuildService.repairAll(n: Nation, free: boolean): (number, number)
 	local count, cost = 0, 0
 	for _, b in n.buildings do
 		if b.damaged then
-			local price = math.floor(b.def.cost * Config.RepairCostRate)
+			local price = math.floor(b.cost * Config.RepairCostRate)
 			if free or n.data.Cash >= price then
 				if not free then
 					n.data.Cash -= price
@@ -3842,13 +4212,6 @@ local function nationOf(player: Player): Nation?
 	return nil
 end
 
-local function validRotation(r: any): number
-	if typeof(r) ~= "number" then
-		return 0
-	end
-	return math.floor(r) % 4
-end
-
 local function requireDef(n: Nation, id: any): (any, string?)
 	if typeof(id) ~= "string" then
 		return nil, "Unknown building"
@@ -3864,7 +4227,8 @@ local function requireDef(n: Nation, id: any): (any, string?)
 	return def, nil
 end
 
-local function onPlace(player: Player, id: any, x: any, z: any, r: any)
+-- x, z: island-local studs (footprint centre); a: yaw in degrees.
+local function onPlace(player: Player, id: any, x: any, z: any, a: any)
 	local n = nationOf(player)
 	if not n then
 		return { ok = false, err = "Loading..." }
@@ -3873,19 +4237,21 @@ local function onPlace(player: Player, id: any, x: any, z: any, r: any)
 	if not def then
 		return { ok = false, err = err }
 	end
-	if typeof(x) ~= "number" or typeof(z) ~= "number" then
+	if not finite(x) or not finite(z) then
 		return { ok = false, err = "Invalid position" }
 	end
-	local ok, perr, b = placeInternal(n, def, math.floor(x), math.floor(z), validRotation(r), true)
+	local len = isSegment(def) and def.size[2] * Config.CellSize or nil
+	local ok, perr, b = placeInternal(n, def, cleanPos(x), cleanPos(z), cleanAngle(a), len, true)
 	if not ok or not b then
 		return { ok = false, err = perr }
 	end
-	pushUndo(n, { kind = "place", uid = b.uid, cost = def.cost })
+	pushUndo(n, { kind = "place", uid = b.uid })
 	S.StateService.push(n)
 	return { ok = true, uid = b.uid }
 end
 
-local function onPlaceMany(player: Player, id: any, cells: any, r: any)
+-- A row of the same building (drag tool): spots = { {x, z}, ... }.
+local function onPlaceMany(player: Player, id: any, spots: any, a: any)
 	local n = nationOf(player)
 	if not n then
 		return { ok = false, err = "Loading..." }
@@ -3894,18 +4260,20 @@ local function onPlaceMany(player: Player, id: any, cells: any, r: any)
 	if not def then
 		return { ok = false, err = err }
 	end
-	if typeof(cells) ~= "table" then
+	if typeof(spots) ~= "table" then
 		return { ok = false, err = "Invalid request" }
 	end
+	local angle = cleanAngle(a)
+	local len = isSegment(def) and def.size[2] * Config.CellSize or nil
 	local placed = 0
 	local lastErr: string? = nil
 	local uids = {}
-	for i, cell in cells do
-		if i > 250 then
+	for i, spot in spots do
+		if i > 120 then
 			break
 		end
-		if typeof(cell) == "table" and typeof(cell[1]) == "number" and typeof(cell[2]) == "number" then
-			local ok, perr, b = placeInternal(n, def, math.floor(cell[1]), math.floor(cell[2]), validRotation(r), true)
+		if typeof(spot) == "table" and finite(spot[1]) and finite(spot[2]) then
+			local ok, perr, b = placeInternal(n, def, cleanPos(spot[1]), cleanPos(spot[2]), angle, len, true)
 			if ok and b then
 				placed += 1
 				table.insert(uids, b.uid)
@@ -3918,20 +4286,52 @@ local function onPlaceMany(player: Player, id: any, cells: any, r: any)
 		end
 	end
 	if placed > 0 then
-		pushUndo(n, { kind = "placeMany", uids = uids, cost = def.cost })
+		pushUndo(n, { kind = "placeMany", uids = uids })
 		BuildService.recomputeRoads(n)
 		S.StateService.push(n)
 	end
 	return { ok = placed > 0, placed = placed, err = placed == 0 and lastErr or nil }
 end
 
+-- Draw a road from A to B (island-local studs), any length and direction.
+local function onPlaceRoad(player: Player, id: any, ax: any, az: any, bx: any, bz: any)
+	local n = nationOf(player)
+	if not n then
+		return { ok = false, err = "Loading..." }
+	end
+	local def, err = requireDef(n, id)
+	if not def then
+		return { ok = false, err = err }
+	end
+	if not isSegment(def) then
+		return { ok = false, err = "Only roads can be drawn" }
+	end
+	if not (finite(ax) and finite(az) and finite(bx) and finite(bz)) then
+		return { ok = false, err = "Invalid position" }
+	end
+	local x, z, angle, len = Footprint.segment(ax, az, bx, bz)
+	if len < 2 then
+		return { ok = false, err = "Drag further to draw a road" }
+	end
+	if len > Config.RoadMaxLength then
+		return { ok = false, err = ("Roads are drawn in pieces up to %d studs"):format(Config.RoadMaxLength) }
+	end
+	local ok, perr, b = placeInternal(n, def, cleanPos(x), cleanPos(z), cleanAngle(angle), math.floor(len * 10 + 0.5) / 10, true)
+	if not ok or not b then
+		return { ok = false, err = perr }
+	end
+	pushUndo(n, { kind = "place", uid = b.uid })
+	S.StateService.push(n)
+	return { ok = true, uid = b.uid, cost = b.cost }
+end
+
 local function refundFor(b: BRuntime): number
 	if b.finishAt then
-		return b.def.cost
+		return b.cost
 	elseif b.damaged then
-		return math.floor(b.def.cost * Config.SellRefund * 0.5)
+		return math.floor(b.cost * Config.SellRefund * 0.5)
 	end
-	return math.floor(b.def.cost * Config.SellRefund)
+	return math.floor(b.cost * Config.SellRefund)
 end
 
 local function onDelete(player: Player, uid: any)
@@ -3945,36 +4345,41 @@ local function onDelete(player: Player, uid: any)
 	end
 	local refund = refundFor(b)
 	n.data.Cash += refund
-	pushUndo(n, { kind = "delete", id = b.id, x = b.x, z = b.z, r = b.r, refund = refund, wasBuilt = b.finishAt == nil })
+	pushUndo(n, { kind = "delete", id = b.id, x = b.x, z = b.z, r = b.r, len = b.len, refund = refund, wasBuilt = b.finishAt == nil })
 	removeInternal(n, b)
 	S.StateService.push(n)
 	return { ok = true, refund = refund }
 end
 
-local function onMove(player: Player, uid: any, x: any, z: any, r: any)
+local function relocate(n: Nation, b: BRuntime, x: number, z: number, r: number)
+	unindex(n, b)
+	b.x, b.z, b.r = x, z, r
+	insert(n, b)
+	if b.model then
+		b.model:PivotTo(BuildService.worldCFrame(n, b))
+		b.model:SetAttribute("PX", b.x)
+		b.model:SetAttribute("PZ", b.z)
+		b.model:SetAttribute("Angle", b.r)
+	end
+	BuildService.recomputeRoads(n)
+end
+
+local function onMove(player: Player, uid: any, x: any, z: any, a: any)
 	local n = nationOf(player)
-	if not n or typeof(uid) ~= "number" or typeof(x) ~= "number" or typeof(z) ~= "number" then
+	if not n or typeof(uid) ~= "number" or not finite(x) or not finite(z) then
 		return { ok = false, err = "Invalid request" }
 	end
 	local b = n.buildings[uid]
 	if not b then
 		return { ok = false, err = "Building not found" }
 	end
-	local nx, nz, nr = math.floor(x), math.floor(z), validRotation(r)
-	local ok, err = BuildService.canPlace(n, b.def, nx, nz, nr, b.uid)
+	local nx, nz, nr = cleanPos(x), cleanPos(z), cleanAngle(a)
+	local ok, err = BuildService.canPlace(n, b.def, nx, nz, nr, b.len, b.uid)
 	if not ok then
 		return { ok = false, err = err }
 	end
 	pushUndo(n, { kind = "move", uid = b.uid, x = b.x, z = b.z, r = b.r })
-	unindex(n, b)
-	b.x, b.z, b.r = nx, nz, nr
-	for _, key in cellsOf(b.def, b.x, b.z, b.r) do
-		n.grid[key] = b.uid
-	end
-	if b.model then
-		b.model:PivotTo(BuildService.worldCFrame(n, b))
-	end
-	BuildService.recomputeRoads(n)
+	relocate(n, b, nx, nz, nr)
 	return { ok = true }
 end
 
@@ -3996,7 +4401,7 @@ local function onUndo(player: Player)
 		for _, uid in uids do
 			local b = n.buildings[uid]
 			if b then
-				n.data.Cash += b.def.cost
+				n.data.Cash += b.cost
 				removeInternal(n, b)
 			end
 		end
@@ -4006,7 +4411,7 @@ local function onUndo(player: Player)
 			if n.data.Cash < action.refund then
 				return { ok = false, err = "Not enough cash" }
 			end
-			local ok, err, b = placeInternal(n, def, action.x, action.z, action.r, false)
+			local ok, err, b = placeInternal(n, def, action.x, action.z, action.r, action.len, false)
 			if not ok or not b then
 				return { ok = false, err = err }
 			end
@@ -4018,16 +4423,8 @@ local function onUndo(player: Player)
 		end
 	elseif action.kind == "move" then
 		local b = n.buildings[action.uid]
-		if b and BuildService.canPlace(n, b.def, action.x, action.z, action.r, b.uid) then
-			unindex(n, b)
-			b.x, b.z, b.r = action.x, action.z, action.r
-			for _, key in cellsOf(b.def, b.x, b.z, b.r) do
-				n.grid[key] = b.uid
-			end
-			if b.model then
-				b.model:PivotTo(BuildService.worldCFrame(n, b))
-			end
-			BuildService.recomputeRoads(n)
+		if b and BuildService.canPlace(n, b.def, action.x, action.z, action.r, b.len, b.uid) then
+			relocate(n, b, action.x, action.z, action.r)
 		end
 	end
 	S.StateService.push(n)
@@ -4043,7 +4440,7 @@ local function onRepair(player: Player, uid: any)
 	if not b or not b.damaged then
 		return { ok = false, err = "Nothing to repair" }
 	end
-	local price = math.floor(b.def.cost * Config.RepairCostRate)
+	local price = math.floor(b.cost * Config.RepairCostRate)
 	if n.data.Cash < price then
 		return { ok = false, err = "Not enough cash" }
 	end
@@ -4096,6 +4493,7 @@ end
 function BuildService.start()
 	Net.handle("PlaceBuilding", onPlace, 12)
 	Net.handle("PlaceMany", onPlaceMany, 4)
+	Net.handle("PlaceRoad", onPlaceRoad, 12)
 	Net.handle("DeleteBuilding", onDelete, 12)
 	Net.handle("MoveBuilding", onMove, 8)
 	Net.handle("Undo", onUndo, 6)
@@ -4108,7 +4506,7 @@ return BuildService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">CombatService</string>
             <string name="Source"><![CDATA[--[[
@@ -4435,13 +4833,14 @@ return CombatService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">ConquestService</string>
             <string name="Source"><![CDATA[--[[
 	ConquestService
-	Generates the mainland (low-poly hills, dirt roads, forests, strategic
-	points, staging pads) and runs the capture loop:
+	Generates the central battlefield (a round continent in the middle of the
+	map with hills, dirt roads, forests, strategic points and a staging pad
+	where every nation's bridge lands) and runs the capture loop:
 
 	  * Each point has a garrison. Enemy units in range shoot it down, missile
 	    strikes knock big chunks off it, and it regenerates when left alone.
@@ -4458,6 +4857,7 @@ local Config = require(Shared.Config)
 local WarMap = require(Shared.Catalog.WarMap)
 local ModelBuilder = require(Shared.ModelBuilder)
 local AssetLibrary = require(Shared.AssetLibrary)
+local Grid = require(Shared.Util.Grid)
 local Nations = require(script.Parent.Nations)
 
 type Nation = Nations.Nation
@@ -4478,7 +4878,7 @@ local S: { [string]: any }
 local points: { Point } = {}
 
 local ORIGIN = Config.MainlandOrigin
-local HALF = Config.MainlandSize / 2
+local RADIUS = Config.MainlandRadius
 local NEUTRAL = Color3.fromRGB(200, 200, 196)
 
 local function part(parent: Instance, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): Part
@@ -4498,45 +4898,54 @@ end
 ---------------------------------------------------------------------------
 -- World generation
 ---------------------------------------------------------------------------
+local function disc(world: Folder, name: string, radius: number, y: number, thick: number, color: Color3, material: Enum.Material): Part
+	local p = part(world, Vector3.new(thick, radius * 2, radius * 2), CFrame.new(ORIGIN + Vector3.new(0, y, 0)) * CFrame.Angles(0, 0, math.rad(90)), color, material)
+	p.Shape = Enum.PartType.Cylinder
+	p.Name = name
+	return p
+end
+
 local function buildGround(world: Folder)
-	local tile = Config.MainlandSize / 2
-	for ix = -1, 0 do
-		for iz = -1, 0 do
-			local c = ORIGIN + Vector3.new((ix + 0.5) * tile, -3, (iz + 0.5) * tile)
-			part(world, Vector3.new(tile, 6, tile), CFrame.new(c), Color3.fromRGB(86, 110, 60), Enum.Material.Grass).Name = "Ground"
+	disc(world, "Ground", RADIUS - 40, -3, 6, Color3.fromRGB(86, 110, 60), Enum.Material.Grass)
+	disc(world, "Beach", RADIUS, -3.6, 6, Color3.fromRGB(206, 184, 136), Enum.Material.Sand)
+end
+
+-- Is this offset near one of the bridge lanes (landing -> capital)?
+local function nearLane(v: Vector3, width: number): boolean
+	for i = 1, Config.MaxPlots do
+		local dir = Grid.direction(i)
+		local along = v:Dot(dir)
+		if along > 0 then
+			local side = (v - dir * along).Magnitude
+			if side < width then
+				return true
+			end
 		end
 	end
-	local rim = 60
-	for _, s in { -1, 1 } do
-		part(world, Vector3.new(Config.MainlandSize + rim * 2, 6, rim), CFrame.new(ORIGIN + Vector3.new(0, -3.5, s * (HALF + rim / 2))), Color3.fromRGB(206, 184, 136), Enum.Material.Sand)
-		part(world, Vector3.new(rim, 6, Config.MainlandSize), CFrame.new(ORIGIN + Vector3.new(s * (HALF + rim / 2), -3.5, 0)), Color3.fromRGB(206, 184, 136), Enum.Material.Sand)
-	end
+	return false
 end
 
 local function buildHills(world: Folder)
 	local rng = Random.new(42)
 	local greens = { Color3.fromRGB(72, 96, 52), Color3.fromRGB(96, 118, 62), Color3.fromRGB(118, 128, 70), Color3.fromRGB(84, 104, 56) }
-	for _ = 1, 70 do
-		-- hills hug the edges so the middle stays open for fighting
-		local side = rng:NextInteger(1, 4)
-		local along = rng:NextNumber(-HALF, HALF)
-		local inward = rng:NextNumber(0, 260)
-		local x, z
-		if side == 1 then
-			x, z = along, -HALF + inward
-		elseif side == 2 then
-			x, z = along, HALF - inward
-		elseif side == 3 then
-			x, z = -HALF + inward, along
-		else
-			x, z = HALF - inward, along
+	local placed = 0
+	for _ = 1, 400 do
+		if placed >= 56 then
+			break
 		end
-		local size = Vector3.new(rng:NextNumber(60, 180), rng:NextNumber(30, 90), rng:NextNumber(60, 180))
-		local cf = CFrame.new(ORIGIN + Vector3.new(x, -size.Y * 0.25, z))
-			* CFrame.Angles(rng:NextNumber(-0.5, 0.5), rng:NextNumber(0, math.pi), rng:NextNumber(-0.5, 0.5))
-		local hill = part(world, size, cf, greens[rng:NextInteger(1, #greens)])
-		hill.Name = "Hill"
-		hill.CanQuery = false
+		-- hills ring the shore between the bridge lanes so the middle stays open
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = rng:NextNumber(RADIUS - 300, RADIUS - 110)
+		local v = Vector3.new(math.sin(a) * r, 0, math.cos(a) * r)
+		if not nearLane(v, 150) then
+			placed += 1
+			local size = Vector3.new(rng:NextNumber(60, 170), rng:NextNumber(30, 80), rng:NextNumber(60, 170))
+			local cf = CFrame.new(ORIGIN + v + Vector3.new(0, -size.Y * 0.25, 0))
+				* CFrame.Angles(rng:NextNumber(-0.5, 0.5), rng:NextNumber(0, math.pi), rng:NextNumber(-0.5, 0.5))
+			local hill = part(world, size, cf, greens[rng:NextInteger(1, #greens)])
+			hill.Name = "Hill"
+			hill.CanQuery = false
+		end
 	end
 end
 
@@ -4563,9 +4972,12 @@ end
 
 local function buildTrees(world: Folder)
 	local rng = Random.new(9)
-	for _ = 1, 26 do
-		local c = ORIGIN + Vector3.new(rng:NextNumber(-HALF + 120, HALF - 120), 0, rng:NextNumber(-HALF + 120, HALF - 120))
-		local tooClose = false
+	for _ = 1, 40 do
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = rng:NextNumber(220, RADIUS - 120)
+		local v = Vector3.new(math.sin(a) * r, 0, math.cos(a) * r)
+		local c = ORIGIN + v
+		local tooClose = nearLane(v, 90)
 		for _, def in WarMap do
 			if ((ORIGIN + def.offset) - c).Magnitude < 160 then
 				tooClose = true
@@ -4598,17 +5010,23 @@ local function buildTrees(world: Folder)
 	end
 end
 
+-- Staging pad where each nation's bridge lands, with its colours flying.
 local function buildStaging(world: Folder)
 	for i = 1, Config.MaxPlots do
-		local pos = ORIGIN + Vector3.new(-1050 + (i - 1) * 300, 0, HALF - 110)
-		local pad = part(world, Vector3.new(90, 0.4, 60), CFrame.new(pos + Vector3.new(0, 0.2, 0)), Color3.fromRGB(176, 176, 168))
+		local pos = Grid.landing(i)
+		local cf = CFrame.lookAt(pos, ORIGIN) -- -Z faces the capital
+		local pad = part(world, Vector3.new(90, 0.4, 70), cf * CFrame.new(0, 0.2, 0), Color3.fromRGB(176, 176, 168), Enum.Material.Concrete)
 		pad.Name = "Staging_" .. i
-		part(world, Vector3.new(0.6, 14, 0.6), CFrame.new(pos + Vector3.new(-40, 7, -26)), Color3.fromRGB(80, 84, 90))
-		local flag = part(world, Vector3.new(0.2, 4, 7), CFrame.new(pos + Vector3.new(-40, 12, -22.5)), Config.NationColors[i])
-		flag.Name = "Flag"
-		-- tunnel mouth
-		part(world, Vector3.new(26, 14, 10), CFrame.new(pos + Vector3.new(0, 7, 40)), Color3.fromRGB(120, 124, 116))
-		part(world, Vector3.new(16, 10, 10.4), CFrame.new(pos + Vector3.new(0, 5, 40)), Color3.fromRGB(30, 32, 36))
+		pad.CanCollide = false
+		for _, side in { -1, 1 } do
+			part(world, Vector3.new(0.6, 14, 0.6), cf * CFrame.new(side * 40, 7, 30), Color3.fromRGB(80, 84, 90))
+			local flag = part(world, Vector3.new(7, 4, 0.2), cf * CFrame.new(side * 40 + 3.5, 12, 30), Config.NationColors[i])
+			flag.Name = "Flag"
+		end
+		-- sandbag berm around the back of the pad
+		for k = -2, 2 do
+			part(world, Vector3.new(16, 2.4, 3), cf * CFrame.new(k * 17, 1.2, 38), Color3.fromRGB(160, 146, 108), Enum.Material.Fabric).Name = "Sandbags"
+		end
 	end
 end
 
@@ -4808,14 +5226,12 @@ function ConquestService.init(services)
 	local capital = ORIGIN
 	for i, def in WarMap do
 		if def.id ~= "capital" then
-			buildRoad(world, capital, ORIGIN + def.offset, (i % 2 == 0 and 1 or -1) * 140)
+			buildRoad(world, capital, ORIGIN + def.offset, (i % 2 == 0 and 1 or -1) * 90)
 		end
 	end
 	for i = 1, Config.MaxPlots do
-		local staging = ORIGIN + Vector3.new(-1050 + (i - 1) * 300, 0, HALF - 110)
-		if i % 2 == 1 then
-			buildRoad(world, staging, capital, (i - 4) * 30)
-		end
+		-- every bridge feeds a dirt road to the capital
+		buildRoad(world, Grid.shore(i), capital, (i % 2 == 0 and 1 or -1) * 40)
 	end
 	buildTrees(world)
 	buildStaging(world)
@@ -4846,7 +5262,7 @@ return ConquestService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--[[
@@ -5141,7 +5557,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">EconomyService</string>
             <string name="Source"><![CDATA[--[[
@@ -5260,11 +5676,11 @@ function EconomyService.compute(n: Nation, dt: number)
 			setAttr(b.model, "Status", "Under Construction")
 		elseif b.damaged then
 			damaged += 1
-			upkeep += def.cost * Config.UpkeepRate
+			upkeep += b.cost * Config.UpkeepRate
 			b.eff = 0
 			setAttr(b.model, "Status", "Damaged - Needs Repair")
 		else
-			upkeep += def.cost * Config.UpkeepRate
+			upkeep += b.cost * Config.UpkeepRate
 			local road = b.connected and 1 or 0.5
 			local eff = road
 			if def.workers then
@@ -5451,7 +5867,7 @@ return EconomyService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">LogisticsService</string>
             <string name="Source"><![CDATA[--[[
@@ -5640,7 +6056,7 @@ return LogisticsService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="38">
           <Properties>
             <string name="Name">MonetizationService</string>
             <string name="Source"><![CDATA[--[[
@@ -5851,7 +6267,7 @@ return MonetizationService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="39">
           <Properties>
             <string name="Name">NationService</string>
             <string name="Source"><![CDATA[--[[
@@ -5939,7 +6355,7 @@ function NationService.compute(n: Nation): Rank.Info
 	local value = 0
 	for _, b in n.buildings do
 		if not b.finishAt then
-			value += b.def.cost
+			value += b.cost
 		end
 	end
 	local techs = 0
@@ -6014,7 +6430,7 @@ return NationService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">Nations</string>
             <string name="Source"><![CDATA[--[[
@@ -6032,9 +6448,11 @@ export type BRuntime = {
 	uid: number,
 	id: string,
 	def: any,
-	x: number,
+	x: number, -- island-local studs (footprint centre)
 	z: number,
-	r: number,
+	r: number, -- yaw in degrees
+	len: number?, -- road segments: length in studs
+	cost: number, -- what was paid (roads scale with length)
 	model: Model?,
 	finishAt: number?,
 	startAt: number?,
@@ -6058,9 +6476,10 @@ export type Nation = {
 	data: { [string]: any },
 	plotIndex: number,
 	origin: Vector3,
+	frame: CFrame, -- island frame; -Z faces the battlefield
 	folder: Folder,
 	buildings: { [number]: BRuntime },
-	grid: { [number]: number },
+	grid: { [number]: { [number]: boolean } }, -- spatial hash (Footprint)
 	stats: { [string]: any },
 	passes: { [string]: boolean },
 	premium: boolean,
@@ -6123,11 +6542,16 @@ function Nations.speed(n: Nation): number
 	return n.passes.FastBuild and 2 or 1
 end
 
+-- Finished buildings of a type. Road segments count per 8-stud tile of length.
 function Nations.countBuilt(n: Nation, id: string): number
 	local c = 0
 	for _, b in n.buildings do
 		if b.id == id and not b.finishAt then
-			c += 1
+			if b.len then
+				c += math.max(1, math.floor(b.len / 8 + 0.5))
+			else
+				c += 1
+			end
 		end
 	end
 	return c
@@ -6152,7 +6576,7 @@ return Nations
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">PlotService</string>
             <string name="Source"><![CDATA[--[[
@@ -6173,11 +6597,12 @@ local PlotService = {}
 type Plot = {
 	index: number,
 	origin: Vector3,
+	frame: CFrame,
 	model: Model,
 	buildings: Folder,
-	sign: TextLabel,
-	signSub: TextLabel,
-	flag: BasePart,
+	sign: { TextLabel },
+	signSub: { TextLabel },
+	flags: { BasePart },
 	owner: Player?,
 }
 
@@ -6203,10 +6628,9 @@ local function part(parent: Instance, name: string, size: Vector3, cf: CFrame, c
 	return p
 end
 
--- Sea: terrain water (waves, reflections) covering the homeland and the
--- mainland, falling back to flat parts if terrain is unavailable.
-local SEA_MIN = Vector2.new(-5000, -1400)
-local SEA_MAX = Vector2.new(5000, 6600)
+-- Sea: terrain water (waves, reflections) under the whole map, falling back
+-- to flat parts if terrain is unavailable.
+local SEA_HALF = 2300
 
 local function buildSea(world: Folder)
 	local ok = pcall(function()
@@ -6216,92 +6640,68 @@ local function buildSea(world: Folder)
 		terrain.WaterReflectance = 0.5
 		terrain.WaterWaveSize = 0.12
 		terrain.WaterWaveSpeed = 8
-		local chunk = 2000
-		for x = SEA_MIN.X, SEA_MAX.X - 1, chunk do
-			for z = SEA_MIN.Y, SEA_MAX.Y - 1, chunk do
-				terrain:FillBlock(CFrame.new(x + chunk / 2, -10, z + chunk / 2), Vector3.new(chunk, 16, chunk), Enum.Material.Water)
-			end
-		end
-		-- sandy sea floor so the water reads blue-green, not black
-		for x = SEA_MIN.X, SEA_MAX.X - 1, chunk do
-			for z = SEA_MIN.Y, SEA_MAX.Y - 1, chunk do
-				terrain:FillBlock(CFrame.new(x + chunk / 2, -20, z + chunk / 2), Vector3.new(chunk, 4, chunk), Enum.Material.Sand)
+		local chunk = 1150
+		for x = -SEA_HALF, SEA_HALF - 1, chunk do
+			for z = -SEA_HALF, SEA_HALF - 1, chunk do
+				local c = Config.MainlandOrigin + Vector3.new(x + chunk / 2, 0, z + chunk / 2)
+				terrain:FillBlock(CFrame.new(c.X, -10, c.Z), Vector3.new(chunk, 16, chunk), Enum.Material.Water)
+				-- sandy sea floor so the water reads blue-green, not black
+				terrain:FillBlock(CFrame.new(c.X, -20, c.Z), Vector3.new(chunk, 4, chunk), Enum.Material.Sand)
 			end
 		end
 	end)
 	if ok then
 		return
 	end
-	local tile = 2000
-	for ix = -2, 2 do
-		for iz = -1, 3 do
-			local p = part(world, "Sea", Vector3.new(tile, 2, tile), CFrame.new(ix * tile, -3, iz * tile + 600), SEA)
+	local tile = SEA_HALF * 2 / 3
+	for ix = -1, 1 do
+		for iz = -1, 1 do
+			local c = Config.MainlandOrigin + Vector3.new(ix * tile, -3, iz * tile)
+			local p = part(world, "Sea", Vector3.new(tile, 2, tile), CFrame.new(c), SEA)
 			p.Reflectance = 0.05
 			p.CanQuery = false
 		end
 	end
 end
 
-local function buildPlot(world: Folder, index: number): Plot
-	local origin = Grid.plotOrigin(index)
-	local size = Grid.PlotSize
-	local model = Instance.new("Model")
-	model.Name = "Plot_" .. index
+local FONT = Font.new("rbxasset://fonts/families/Sarpanch.json", Enum.FontWeight.Bold)
 
-	local ground = part(model, "Ground", Vector3.new(size, 6, size), CFrame.new(origin - Vector3.new(0, 3, 0)), GRASS, Enum.Material.Grass)
-	ground:SetAttribute("PlotIndex", index)
-	local rim = 34
-	part(model, "Sand", Vector3.new(size + rim * 2, 6, size + rim * 2), CFrame.new(origin - Vector3.new(0, 3.6, 0)), SAND, Enum.Material.Sand)
-
-	-- thin light-blue border line marking the buildable area
-	local h = 0.15
-	for _, s in { -1, 1 } do
-		local a = part(model, "Border", Vector3.new(size, h, 0.5), CFrame.new(origin + Vector3.new(0, h / 2, s * size / 2)), BORDER, Enum.Material.Neon)
-		local b = part(model, "Border", Vector3.new(0.5, h, size), CFrame.new(origin + Vector3.new(s * size / 2, h / 2, 0)), BORDER, Enum.Material.Neon)
-		a.Transparency, b.Transparency = 0.25, 0.25
-		a.CanCollide, b.CanCollide = false, false
-		a.CanQuery, b.CanQuery = false, false
-	end
-
-	-- nation sign + flagpole on the sand at the south edge
-	local signPos = origin + Vector3.new(0, 0, size / 2 + rim * 0.55)
-	local steel = Color3.fromRGB(62, 66, 64)
-	part(model, "SignPostL", Vector3.new(1, 10, 1), CFrame.new(signPos + Vector3.new(-13, 5, 0)), steel, Enum.Material.Metal)
-	part(model, "SignPostR", Vector3.new(1, 10, 1), CFrame.new(signPos + Vector3.new(13, 5, 0)), steel, Enum.Material.Metal)
-	local board = part(model, "SignBoard", Vector3.new(30, 6.5, 0.8), CFrame.new(signPos + Vector3.new(0, 9.5, 0)), Color3.fromRGB(30, 34, 32))
-	part(model, "SignStripe", Vector3.new(30, 0.6, 0.9), CFrame.new(signPos + Vector3.new(0, 6.6, 0)), Color3.fromRGB(255, 180, 54), Enum.Material.Neon)
+local function signFace(board: BasePart, face: Enum.NormalId): (TextLabel, TextLabel)
 	local gui = Instance.new("SurfaceGui")
-	gui.Face = Enum.NormalId.Front -- faces into the plot
-	gui.CanvasSize = Vector2.new(600, 130)
+	gui.Name = "Sign" .. face.Name
+	gui.Face = face
+	gui.CanvasSize = Vector2.new(600, 110)
 	gui.LightInfluence = 0.4
 	gui.Parent = board
 	local label = Instance.new("TextLabel")
 	label.Name = "Title"
-	label.Position = UDim2.fromScale(0.03, 0.08)
-	label.Size = UDim2.fromScale(0.94, 0.58)
+	label.Position = UDim2.fromScale(0.03, 0.06)
+	label.Size = UDim2.fromScale(0.94, 0.6)
 	label.BackgroundTransparency = 1
 	label.TextColor3 = Color3.fromRGB(240, 238, 228)
 	label.TextScaled = true
-	label.FontFace = Font.new("rbxasset://fonts/families/Sarpanch.json", Enum.FontWeight.Bold)
+	label.FontFace = FONT
 	label.Text = "UNCLAIMED LAND"
 	label.Parent = gui
 	local sub = Instance.new("TextLabel")
 	sub.Name = "Sub"
 	sub.Position = UDim2.fromScale(0.03, 0.68)
-	sub.Size = UDim2.fromScale(0.94, 0.24)
+	sub.Size = UDim2.fromScale(0.94, 0.26)
 	sub.BackgroundTransparency = 1
 	sub.TextColor3 = Color3.fromRGB(255, 180, 54)
 	sub.TextScaled = true
-	sub.FontFace = Font.new("rbxasset://fonts/families/Sarpanch.json", Enum.FontWeight.Bold)
+	sub.FontFace = FONT
 	sub.Text = "FREE TERRITORY"
 	sub.Parent = gui
+	return label, sub
+end
 
-	local polePos = signPos + Vector3.new(24, 0, 0)
-	part(model, "FlagBase", Vector3.new(3, 1, 3), CFrame.new(polePos + Vector3.new(0, 0.5, 0)), Color3.fromRGB(150, 150, 140), Enum.Material.Concrete)
-	local pole = part(model, "FlagPole", Vector3.new(30, 0.5, 0.5), CFrame.new(polePos + Vector3.new(0, 15, 0)) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(200, 204, 206), Enum.Material.Metal)
+local function flagpole(model: Model, name: string, base: CFrame): BasePart
+	part(model, "FlagBase", Vector3.new(3, 1, 3), base * CFrame.new(0, 0.5, 0), Color3.fromRGB(150, 150, 140), Enum.Material.Concrete)
+	local pole = part(model, "FlagPole", Vector3.new(26, 0.5, 0.5), base * CFrame.new(0, 13, 0) * CFrame.Angles(0, 0, math.rad(90)), Color3.fromRGB(200, 204, 206), Enum.Material.Metal)
 	pole.Shape = Enum.PartType.Cylinder
-	part(model, "FlagCap", Vector3.new(0.9, 0.9, 0.9), CFrame.new(polePos + Vector3.new(0, 30.2, 0)), Color3.fromRGB(255, 180, 54), Enum.Material.Metal).Shape = Enum.PartType.Ball
-	local cloth = part(model, "FlagCloth", Vector3.new(9, 6, 0.15), CFrame.new(polePos + Vector3.new(4.8, 26.6, 0)), Color3.fromRGB(240, 240, 236), Enum.Material.Fabric)
+	part(model, "FlagCap", Vector3.new(0.9, 0.9, 0.9), base * CFrame.new(0, 26.2, 0), Color3.fromRGB(255, 180, 54), Enum.Material.Metal).Shape = Enum.PartType.Ball
+	local cloth = part(model, name, Vector3.new(9, 6, 0.15), base * CFrame.new(4.8, 22.6, 0), Color3.fromRGB(240, 240, 236), Enum.Material.Fabric)
 	cloth.CanCollide = false
 	cloth.Transparency = 1
 	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
@@ -6313,6 +6713,93 @@ local function buildPlot(world: Folder, index: number): Plot
 		fg.Enabled = false
 		fg.Parent = cloth
 	end
+	return cloth
+end
+
+-- Bridge from the island's beach to the battlefield shore.
+local function buildBridge(model: Model, index: number)
+	local W = Config.BridgeWidth
+	local toCenter = -Grid.direction(index)
+	local a = Grid.gate(index) - toCenter * 6
+	local b = Grid.shore(index) - Grid.direction(index) * 14
+	local len = (b - a).Magnitude
+	local frame = CFrame.lookAt((a + b) / 2, b)
+	local concrete = Color3.fromRGB(150, 152, 148)
+	local deck = part(model, "BridgeDeck", Vector3.new(W, 1.6, len), frame * CFrame.new(0, -0.75, 0), Color3.fromRGB(58, 62, 64), Enum.Material.Asphalt)
+	deck:SetAttribute("Bridge", index)
+	local line = part(model, "BridgeLine", Vector3.new(0.5, 0.05, len - 4), frame * CFrame.new(0, 0.08, 0), Color3.fromRGB(236, 196, 64))
+	line.CanCollide = false
+	line.CanQuery = false
+	for _, side in { -1, 1 } do
+		local x = side * (W / 2 - 0.4)
+		part(model, "Railing", Vector3.new(0.8, 1.2, len), frame * CFrame.new(x, 1.6, 0), concrete, Enum.Material.Concrete)
+		part(model, "Curb", Vector3.new(1.6, 0.6, len), frame * CFrame.new(side * (W / 2 - 0.8), 0.3, 0), concrete, Enum.Material.Concrete)
+		local n = math.max(2, math.floor(len / 36))
+		for i = 0, n do
+			local z = -len / 2 + 6 + (len - 12) * i / n
+			part(model, "Post", Vector3.new(0.9, 2.2, 0.9), frame * CFrame.new(x, 1.1, z), concrete, Enum.Material.Concrete)
+			if i % 2 == 0 then
+				local lamp = part(model, "LampPost", Vector3.new(0.4, 7, 0.4), frame * CFrame.new(x, 3.5, z), Color3.fromRGB(70, 74, 76), Enum.Material.Metal)
+				lamp.CanCollide = false
+				local head = part(model, "Lamp", Vector3.new(1.4, 0.5, 1.4), frame * CFrame.new(x - side * 0.6, 7, z), Color3.fromRGB(255, 220, 160), Enum.Material.Neon)
+				head.CanCollide = false
+				head.Transparency = 1
+				head:SetAttribute("NightGlow", true)
+			end
+		end
+	end
+	local piers = math.max(2, math.floor(len / 50))
+	for i = 1, piers do
+		local z = -len / 2 + len * i / (piers + 1)
+		for _, side in { -1, 1 } do
+			part(model, "Pier", Vector3.new(3.2, 24, 3.2), frame * CFrame.new(side * (W / 2 - 3), -13.5, z), concrete, Enum.Material.Concrete)
+		end
+		part(model, "PierCap", Vector3.new(W, 1.4, 3.6), frame * CFrame.new(0, -2.2, z), concrete, Enum.Material.Concrete)
+	end
+end
+
+local function buildPlot(world: Folder, index: number): Plot
+	local frame = Grid.plotCFrame(index)
+	local origin = frame.Position
+	local size = Grid.PlotSize
+	local rim = Grid.Rim
+	local model = Instance.new("Model")
+	model.Name = "Plot_" .. index
+
+	local ground = part(model, "Ground", Vector3.new(size, 6, size), frame * CFrame.new(0, -3, 0), GRASS, Enum.Material.Grass)
+	ground:SetAttribute("PlotIndex", index)
+	part(model, "Sand", Vector3.new(size + rim * 2, 6, size + rim * 2), frame * CFrame.new(0, -3.6, 0), SAND, Enum.Material.Sand)
+
+	-- thin light-blue border line marking the buildable area
+	local h = 0.15
+	for _, s in { -1, 1 } do
+		local a = part(model, "Border", Vector3.new(size, h, 0.5), frame * CFrame.new(0, h / 2, s * size / 2), BORDER, Enum.Material.Neon)
+		local b = part(model, "Border", Vector3.new(0.5, h, size), frame * CFrame.new(s * size / 2, h / 2, 0), BORDER, Enum.Material.Neon)
+		a.Transparency, b.Transparency = 0.25, 0.25
+		a.CanCollide, b.CanCollide = false, false
+		a.CanQuery, b.CanQuery = false, false
+	end
+
+	-- border gate over the bridge: nation name on both faces, flags either side
+	local gateCF = frame * CFrame.new(0, 0, -(size / 2 + rim * 0.5))
+	local steel = Color3.fromRGB(62, 66, 64)
+	local W = Config.BridgeWidth
+	for _, side in { -1, 1 } do
+		part(model, "GatePillar", Vector3.new(2.4, 18, 2.4), gateCF * CFrame.new(side * (W / 2 + 2), 9, 0), steel, Enum.Material.Metal)
+	end
+	local board = part(model, "SignBoard", Vector3.new(W + 8, 7, 1.2), gateCF * CFrame.new(0, 19, 0), Color3.fromRGB(30, 34, 32))
+	part(model, "SignStripe", Vector3.new(W + 8, 0.6, 1.3), gateCF * CFrame.new(0, 15.8, 0), Color3.fromRGB(255, 180, 54), Enum.Material.Neon)
+	local titles, subs = {}, {}
+	for _, face in { Enum.NormalId.Front, Enum.NormalId.Back } do
+		local t, sub = signFace(board, face)
+		table.insert(titles, t)
+		table.insert(subs, sub)
+	end
+	local flags = {
+		flagpole(model, "FlagCloth", gateCF * CFrame.new(-(W / 2 + 12), 0, 0)),
+		flagpole(model, "FlagCloth2", gateCF * CFrame.new(W / 2 + 12, 0, 0)),
+	}
+	buildBridge(model, index)
 
 	local buildings = Instance.new("Folder")
 	buildings.Name = "Buildings"
@@ -6320,12 +6807,12 @@ local function buildPlot(world: Folder, index: number): Plot
 
 	model.PrimaryPart = ground
 	model.Parent = world
-	return { index = index, origin = origin, model = model, buildings = buildings, sign = label, signSub = sub, flag = cloth, owner = nil }
+	return { index = index, origin = origin, frame = frame, model = model, buildings = buildings, sign = titles, signSub = subs, flags = flags, owner = nil }
 end
 
+-- Spawn just inside the front edge, facing into the city.
 function PlotService.spawnCFrame(index: number): CFrame
-	local origin = Grid.plotOrigin(index)
-	return CFrame.new(origin + Vector3.new(0, 4, Grid.PlotSize / 2 - 12)) * CFrame.Angles(0, 0, 0)
+	return Grid.plotCFrame(index) * CFrame.new(0, 4, -(Grid.PlotSize / 2 - 14)) * CFrame.Angles(0, math.pi, 0)
 end
 
 function PlotService.claim(player: Player): Plot?
@@ -6349,13 +6836,17 @@ function PlotService.release(player: Player)
 	end
 	byPlayer[player] = nil
 	plot.owner = nil
-	plot.sign.Text = "UNCLAIMED LAND"
-	plot.signSub.Text = "FREE TERRITORY"
-	plot.flag.Transparency = 1
-	for _, g in plot.flag:GetChildren() do
-		if g:IsA("SurfaceGui") then
-			g.Enabled = false
-			g:ClearAllChildren()
+	for i, t in plot.sign do
+		t.Text = "UNCLAIMED LAND"
+		plot.signSub[i].Text = "FREE TERRITORY"
+	end
+	for _, cloth in plot.flags do
+		cloth.Transparency = 1
+		for _, g in cloth:GetChildren() do
+			if g:IsA("SurfaceGui") then
+				g.Enabled = false
+				g:ClearAllChildren()
+			end
 		end
 	end
 	plot.model:SetAttribute("OwnerId", nil)
@@ -6368,14 +6859,18 @@ function PlotService.setIdentity(player: Player, name: string?, flag: string?)
 	if not plot then
 		return
 	end
-	plot.sign.Text = name and string.upper(name) or (string.upper(player.DisplayName) .. "'S NATION")
-	plot.signSub.Text = "EST. BY COMMANDER " .. string.upper(player.DisplayName)
-	plot.flag.Transparency = 0
-	for _, g in plot.flag:GetChildren() do
-		if g:IsA("SurfaceGui") then
-			g:ClearAllChildren()
-			Flag.draw(g, flag)
-			g.Enabled = true
+	for i, t in plot.sign do
+		t.Text = name and string.upper(name) or (string.upper(player.DisplayName) .. "'S NATION")
+		plot.signSub[i].Text = "EST. BY COMMANDER " .. string.upper(player.DisplayName)
+	end
+	for _, cloth in plot.flags do
+		cloth.Transparency = 0
+		for _, g in cloth:GetChildren() do
+			if g:IsA("SurfaceGui") then
+				g:ClearAllChildren()
+				Flag.draw(g, flag)
+				g.Enabled = true
+			end
 		end
 	end
 end
@@ -6387,7 +6882,7 @@ end
 -- Which player's plot contains this world position?
 function PlotService.ownerAt(pos: Vector3): Player?
 	for _, plot in plots do
-		if plot.owner and Grid.insidePlot(plot.origin, pos, 0) then
+		if plot.owner and Grid.insidePlot(plot.index, pos, 0) then
 			return plot.owner
 		end
 	end
@@ -6434,7 +6929,7 @@ return PlotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">ProductionService</string>
             <string name="Source"><![CDATA[--[[
@@ -6629,7 +7124,7 @@ return ProductionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">ResearchService</string>
             <string name="Source"><![CDATA[--[[
@@ -6732,7 +7227,7 @@ return ResearchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">RewardService</string>
             <string name="Source"><![CDATA[--[[
@@ -6938,7 +7433,7 @@ return RewardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">StateService</string>
             <string name="Source"><![CDATA[--[[
@@ -7084,15 +7579,19 @@ return StateService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">UnitService</string>
             <string name="Source"><![CDATA[--[[
 	UnitService
 	Ground vehicles. Units are physics assemblies driven by AlignPosition /
 	AlignOrientation (server-owned) so they glide smoothly on every client.
-	They roll out at home, deploy to the mainland staging area through the
-	"tunnel", move in formation and fight automatically on the mainland.
+
+	They really drive: out of your city, over your bridge, across the central
+	battlefield and, with PvP on, over a rival's bridge into their city. Every
+	command is routed through the bridge waypoints. Units fight any enemy
+	vehicle in the same theatre (the battlefield, or a city being raided),
+	wear down strategic-point garrisons, and knock out buildings on raids.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7101,6 +7600,7 @@ local Shared = ReplicatedStorage.Shared
 local Config = require(Shared.Config)
 local Grid = require(Shared.Util.Grid)
 local Net = require(Shared.Net)
+local Format = require(Shared.Util.Format)
 local Units = require(Shared.Catalog.Units)
 local ModelBuilder = require(Shared.ModelBuilder)
 local Nations = require(script.Parent.Nations)
@@ -7117,9 +7617,10 @@ export type Unit = {
 	root: BasePart,
 	align: AlignPosition,
 	orient: AlignOrientation,
-	location: string, -- "home" | "mainland"
+	location: string, -- "home" | "mainland" (battlefield + bridges) | "raid"
 	height: number,
 	lastShot: number,
+	path: { Vector3 },
 }
 
 local UnitService = {}
@@ -7127,15 +7628,14 @@ local S: { [string]: any }
 local folder: Folder
 local all: { [Unit]: boolean } = {}
 
-local HALF = Config.MainlandSize / 2
-
+-- Battlefield or a bridge (open warzone).
 function UnitService.inMainland(pos: Vector3): boolean
-	local d = pos - Config.MainlandOrigin
-	return math.abs(d.X) <= HALF and math.abs(d.Z) <= HALF
+	local zone = Grid.zoneAt(pos)
+	return zone == "mainland" or zone == "bridge"
 end
 
 function UnitService.stagingPos(n: Nation): Vector3
-	return Config.MainlandOrigin + Vector3.new(-1050 + (n.plotIndex - 1) * 300, 0, HALF - 110)
+	return Grid.landing(n.plotIndex)
 end
 
 function UnitService.cap(n: Nation): number
@@ -7172,13 +7672,13 @@ local function homePos(n: Nation, near: any?): Vector3
 	if not anchor and near then
 		anchor = S.BuildService.worldCFrame(n, near).Position
 	end
-	local base = anchor or (n.origin + Vector3.new(0, 0, Grid.PlotSize / 2 - 30))
+	local base = anchor or Grid.yard(n.plotIndex)
 	local rng = Random.new()
 	local p = base + Vector3.new(rng:NextNumber(-18, 18), 0, rng:NextNumber(-18, 18))
-	-- keep inside the plot
+	-- keep inside the island
 	local half = Grid.PlotSize / 2 - 6
-	local d = p - n.origin
-	return n.origin + Vector3.new(math.clamp(d.X, -half, half), 0, math.clamp(d.Z, -half, half))
+	local l = Grid.toLocal(n.plotIndex, p)
+	return (Grid.plotCFrame(n.plotIndex) * CFrame.new(math.clamp(l.X, -half, half), 0, math.clamp(l.Z, -half, half))).Position
 end
 
 local function setTarget(u: Unit, pos: Vector3)
@@ -7190,13 +7690,6 @@ local function setTarget(u: Unit, pos: Vector3)
 		u.orient.CFrame = CFrame.lookAt(Vector3.zero, flatDir.Unit)
 	end
 	u.model:SetAttribute("Moving", true)
-end
-
-local function teleport(u: Unit, pos: Vector3)
-	local cf = CFrame.new(pos.X, u.height, pos.Z) * u.root.CFrame.Rotation
-	u.model:PivotTo(cf)
-	u.root.AssemblyLinearVelocity = Vector3.zero
-	u.align.Position = cf.Position
 end
 
 function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: number?): Unit?
@@ -7228,7 +7721,7 @@ function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: 
 	align.Mode = Enum.PositionAlignmentMode.OneAttachment
 	align.Attachment0 = att
 	align.MaxForce = 1e7
-	align.MaxVelocity = def.speed
+	align.MaxVelocity = def.speed * Config.UnitSpeedScale
 	align.Responsiveness = 30
 	align.Parent = root
 	local orient = Instance.new("AlignOrientation")
@@ -7279,6 +7772,7 @@ function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: 
 		location = "home",
 		height = height,
 		lastShot = 0,
+		path = {},
 	}
 	n.units[unitUid] = u
 	all[u] = true
@@ -7384,47 +7878,153 @@ local function collect(n: Nation, uids: any, filter: ((Unit) -> boolean)?): { Un
 	return out
 end
 
-local function deploy(n: Nation, u: Unit)
-	local staging = UnitService.stagingPos(n)
-	local rng = Random.new()
-	teleport(u, staging + Vector3.new(rng:NextNumber(-30, 30), 0, rng:NextNumber(-20, 20)))
-	u.location = "mainland"
-	u.model:SetAttribute("Location", "mainland")
+---------------------------------------------------------------------------
+-- Routing: city -> yard -> gate -> bridge -> shore -> battlefield -> ...
+---------------------------------------------------------------------------
+local function flat(v: Vector3): Vector3
+	return Vector3.new(v.X, 0, v.Z)
 end
 
-local function recall(n: Nation, u: Unit)
-	teleport(u, homePos(n))
-	u.location = "home"
-	u.model:SetAttribute("Location", "home")
+-- Waypoints from `from` to `to` through the bridges (straight lines on land).
+function UnitService.route(from: Vector3, to: Vector3): { Vector3 }
+	local zf, i = Grid.zoneAt(from)
+	local zt, j = Grid.zoneAt(to)
+	local out: { Vector3 } = {}
+	local function add(p: Vector3)
+		table.insert(out, flat(p))
+	end
+	local function intoTarget()
+		if zt == "bridge" and j then
+			add(Grid.landing(j))
+			add(Grid.shore(j))
+		elseif zt == "plot" and j then
+			add(Grid.landing(j))
+			add(Grid.shore(j))
+			add(Grid.gate(j))
+			add(Grid.yard(j))
+		end
+	end
+	if zf == "plot" and i then
+		if zt == "plot" and j == i then
+			add(to)
+			return out
+		end
+		add(Grid.yard(i))
+		add(Grid.gate(i))
+		if zt == "bridge" and j == i then
+			add(to)
+			return out
+		end
+		add(Grid.shore(i))
+		add(Grid.landing(i))
+	elseif zf == "bridge" and i then
+		if zt == "plot" and j == i then
+			add(Grid.gate(i))
+			add(Grid.yard(i))
+			add(to)
+			return out
+		elseif zt == "bridge" and j == i then
+			add(to)
+			return out
+		end
+		add(Grid.shore(i))
+		add(Grid.landing(i))
+	end
+	intoTarget()
+	add(to)
+	-- drop waypoints that are behind us or doubled
+	local cleaned: { Vector3 } = {}
+	local last = flat(from)
+	for _, p in out do
+		if (p - last).Magnitude > 4 then
+			table.insert(cleaned, p)
+			last = p
+		end
+	end
+	return cleaned
+end
+
+local function drive(u: Unit, target: Vector3)
+	u.path = UnitService.route(u.root.CFrame.Position, target)
+	local first = table.remove(u.path, 1)
+	if first then
+		setTarget(u, first)
+	end
+end
+
+-- Theatre a unit is fighting in: "mainland" (battlefield + bridges), the
+-- index of the island it's on, or nil when safe at home.
+local function locate(u: Unit): (string, number?)
+	local zone, idx = Grid.zoneAt(u.root.CFrame.Position)
+	if zone == "plot" and idx == u.n.plotIndex then
+		return "home", idx
+	elseif zone == "plot" then
+		return "raid", idx
+	end
+	return "mainland", nil
+end
+
+local function updateLocation(u: Unit)
+	local loc = locate(u)
+	if loc ~= u.location then
+		u.location = loc
+		u.model:SetAttribute("Location", loc)
+	end
+end
+
+local function canRaid(n: Nation, defender: Nation?): (boolean, string?)
+	if not defender or not defender.ready then
+		return false, "Nobody lives there"
+	end
+	if not n.data.Pvp then
+		return false, "Turn PvP ON to invade other nations"
+	end
+	if not defender.data.Pvp then
+		return false, defender.player.DisplayName .. " has PvP OFF"
+	end
+	if S.CombatService.isShielded(defender) then
+		return false, defender.player.DisplayName .. " is protected by the new-nation shield"
+	end
+	return true, nil
+end
+
+local function formation(units: { Unit }, target: Vector3): { Vector3 }
+	local cols = math.ceil(math.sqrt(#units))
+	local spacing = 11
+	local out = {}
+	for i = 1, #units do
+		local row = (i - 1) // cols
+		local col = (i - 1) % cols
+		table.insert(out, target + Vector3.new((col - (cols - 1) / 2) * spacing, 0, (row - (cols - 1) / 2) * spacing))
+	end
+	return out
 end
 
 local function onCommand(player: Player, uids: any, target: any)
 	local n = Nations.get(player)
-	if not n or typeof(target) ~= "Vector3" then
+	if not n or typeof(target) ~= "Vector3" or target.X ~= target.X or math.abs(target.X) > 1e5 or math.abs(target.Z) > 1e5 then
 		return { ok = false, err = "Invalid request" }
 	end
 	local units = collect(n, uids)
 	if #units == 0 then
 		return { ok = false, err = "Select units first" }
 	end
-	local toMainland = UnitService.inMainland(target)
-	local toHome = Grid.insidePlot(n.origin, target, 0)
-	if not toMainland and not toHome then
-		return { ok = false, err = "Units can only move on your land or the mainland" }
+	local zone, idx = Grid.zoneAt(target)
+	if zone == "sea" then
+		return { ok = false, err = "Vehicles can't drive on water" }
 	end
-	-- simple square formation around the target
-	local cols = math.ceil(math.sqrt(#units))
-	local spacing = 11
-	for i, u in units do
-		if toMainland and u.location ~= "mainland" then
-			deploy(n, u)
-		elseif toHome and u.location == "mainland" then
-			recall(n, u)
+	if zone == "plot" and idx ~= n.plotIndex then
+		local owner = S.PlotService.ownerAt(target)
+		local ok, err = canRaid(n, owner and Nations.get(owner) or nil)
+		if not ok then
+			return { ok = false, err = err }
 		end
-		local row = (i - 1) // cols
-		local col = (i - 1) % cols
-		local offset = Vector3.new((col - (cols - 1) / 2) * spacing, 0, (row - (cols - 1) / 2) * spacing)
-		setTarget(u, target + offset)
+		n.pvpLockUntil = Nations.now() + Config.PvpToggleCooldown
+		n.shieldUntil = 0
+	end
+	local spots = formation(units, target)
+	for i, u in units do
+		drive(u, spots[i])
 	end
 	return { ok = true, count = #units }
 end
@@ -7435,13 +8035,14 @@ local function onDeploy(player: Player, uids: any)
 		return { ok = false }
 	end
 	local units = collect(n, uids, function(u)
-		return u.location ~= "mainland"
+		return u.location == "home"
 	end)
-	for _, u in units do
-		deploy(n, u)
+	local spots = formation(units, UnitService.stagingPos(n))
+	for i, u in units do
+		drive(u, spots[i])
 	end
 	if #units > 0 then
-		Nations.notify(player, ("%d units drove through the tunnel to the mainland"):format(#units), "good")
+		Nations.notify(player, ("%d vehicles rolling out over the bridge to the front"):format(#units), "good")
 	end
 	return { ok = #units > 0, count = #units, err = #units == 0 and "No units at home" or nil }
 end
@@ -7455,36 +8056,90 @@ local function onRecall(player: Player, uids: any)
 		return u.location ~= "home"
 	end)
 	for _, u in units do
-		recall(n, u)
+		drive(u, homePos(n))
 	end
-	return { ok = #units > 0, count = #units, err = #units == 0 and "No units on the mainland" or nil }
+	return { ok = #units > 0, count = #units, err = #units == 0 and "No units on the battlefield" or nil }
 end
 
----------------------------------------------------------------------------
--- Combat loop (mainland only)
----------------------------------------------------------------------------
-local STEP = 0.5
-
-local function combatStep()
-	local now = os.clock()
-	local units = UnitService.mainlandUnits()
-	for _, u in units do
-		if all[u] then
-			-- arrival
-			if u.model:GetAttribute("Moving") then
-				local d = (u.align.Position - u.root.CFrame.Position) * Vector3.new(1, 0, 1)
-				if d.Magnitude < 2 then
+-- Advance along the route; refresh where each unit is.
+local function moveStep()
+	for u in all do
+		if u.model:GetAttribute("Moving") then
+			local d = (u.align.Position - u.root.CFrame.Position) * Vector3.new(1, 0, 1)
+			if d.Magnitude < 6 then
+				local nextPoint = table.remove(u.path, 1)
+				if nextPoint then
+					setTarget(u, nextPoint)
+				elseif d.Magnitude < 2 then
 					u.model:SetAttribute("Moving", nil)
 				end
 			end
-			if u.def.dps > 0 then
+		end
+		updateLocation(u)
+	end
+end
+
+UnitService._moveStep = moveStep
+
+---------------------------------------------------------------------------
+-- Combat loop: battlefield fights, city raids and their defenders
+---------------------------------------------------------------------------
+local STEP = 0.5
+local raidNotice: { [Nation]: number } = {}
+
+-- Units fight when they're from different nations in the same theatre.
+local function theatre(u: Unit): string
+	local loc, idx = locate(u)
+	if loc == "mainland" then
+		return "mainland"
+	end
+	return "plot" .. tostring(idx)
+end
+
+local function raidAllowed(u: Unit, defender: Nation?): boolean
+	return defender ~= nil and u.n.data.Pvp == true and defender.data.Pvp == true and not S.CombatService.isShielded(defender)
+end
+
+local function buildingTarget(u: Unit, defender: Nation, pos: Vector3): any?
+	local best, bestD = nil, u.def.range
+	for _, b in defender.buildings do
+		if not b.damaged and not S.BuildService.isRoadDef(b.def) then
+			local c = S.BuildService.worldCFrame(defender, b).Position
+			local reach = math.min(b.def.size[1], b.def.size[2]) * Config.CellSize / 2
+			local d = math.max(0, (Vector3.new(c.X, 0, c.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude - reach)
+			if d <= bestD then
+				best, bestD = b, d
+			end
+		end
+	end
+	return best
+end
+
+local function combatStep()
+	local now = os.clock()
+	local byTheatre: { [string]: { Unit } } = {}
+	for u in all do
+		local t = theatre(u)
+		byTheatre[t] = byTheatre[t] or {}
+		table.insert(byTheatre[t], u)
+	end
+	for t, units in byTheatre do
+		local plotIdx = tonumber(string.match(t, "^plot(%d+)$"))
+		local owner = plotIdx and S.PlotService.ownerAt(Grid.plotOrigin(plotIdx)) or nil
+		local defender = owner and Nations.get(owner) or nil
+		for _, u in units do
+			if all[u] and u.def.dps > 0 then
 				local pos = u.root.CFrame.Position
+				-- in a city, only fight when the raid is legal
+				local legal = t == "mainland" or (defender ~= nil and (u.n == defender or raidAllowed(u, defender)))
 				local best, bestD = nil, u.def.range
-				for _, other in units do
-					if other.n ~= u.n and all[other] then
-						local d = (other.root.CFrame.Position - pos).Magnitude
-						if d <= bestD then
-							best, bestD = other, d
+				if legal then
+					for _, other in units do
+						if other.n ~= u.n and all[other] and (t == "mainland" or other.n == defender or u.n == defender) then
+							local d = (other.root.CFrame.Position - pos).Magnitude
+							if d <= bestD then
+								best, bestD = other, d
+							end
 						end
 					end
 				end
@@ -7494,7 +8149,7 @@ local function combatStep()
 						Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), best.root.CFrame.Position, u.def.range > 150)
 					end
 					UnitService.damage(best, u.def.dps * STEP, u.n)
-				else
+				elseif t == "mainland" then
 					local point = S.ConquestService.enemyPointInRange(pos, u.def.range, u.n.userId)
 					if point then
 						if now - u.lastShot > 1.2 then
@@ -7502,6 +8157,25 @@ local function combatStep()
 							Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), point.center + Vector3.new(0, 4, 0), u.def.range > 150)
 						end
 						S.ConquestService.damageGarrison(point, u.def.dps * STEP, u.n)
+					end
+				elseif defender and u.n ~= defender and raidAllowed(u, defender) then
+					local b = buildingTarget(u, defender, pos)
+					if b then
+						if now - u.lastShot > 1.2 then
+							u.lastShot = now
+							Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), S.BuildService.worldCFrame(defender, b).Position + Vector3.new(0, 4, 0), u.def.range > 150)
+						end
+						local wasDamaged = b.damaged
+						S.BuildService.damage(defender, b, u.def.dps * STEP * Config.RaidBuildingDamage)
+						if b.damaged and not wasDamaged then
+							local loot = math.floor(b.cost * Config.StrikeLootRate)
+							u.n.data.Cash += loot
+							Nations.notify(u.n.player, ("Your %s knocked out a %s%s"):format(u.def.name, b.def.name, loot > 0 and (" +" .. Format.cash(loot)) or ""), "good")
+						end
+						if (raidNotice[defender] or 0) < now then
+							raidNotice[defender] = now + 30
+							Nations.notify(defender.player, ("%s's vehicles are attacking your city!"):format(u.n.player.DisplayName), "bad")
+						end
 					end
 				end
 			end
@@ -7525,6 +8199,15 @@ function UnitService.start()
 	Net.handle("RecallUnits", onRecall, 3)
 	task.spawn(function()
 		while true do
+			task.wait(0.2)
+			local ok, err = pcall(moveStep)
+			if not ok then
+				warn("[Units] move step failed: " .. tostring(err))
+			end
+		end
+	end)
+	task.spawn(function()
+		while true do
 			task.wait(STEP)
 			local ok, err = pcall(combatStep)
 			if not ok then
@@ -7538,7 +8221,7 @@ return UnitService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">WorldService</string>
             <string name="Source"><![CDATA[--[[
@@ -7592,27 +8275,27 @@ return WorldService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="47">
+  <Item class="SoundService" referent="48">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="48">
+  <Item class="StarterPlayer" referent="49">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <float name="CameraMaxZoomDistance">450</float>
       <float name="CameraMinZoomDistance">8</float>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="49">
+    <Item class="StarterPlayerScripts" referent="50">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="50">
+      <Item class="Folder" referent="51">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="ModuleScript" referent="51">
+        <Item class="ModuleScript" referent="52">
           <Properties>
             <string name="Name">ClientState</string>
             <string name="Source"><![CDATA[--[[
@@ -7713,11 +8396,11 @@ return ClientState
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="52">
+        <Item class="Folder" referent="53">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="53">
+          <Item class="ModuleScript" referent="54">
             <Properties>
               <string name="Name">Animator</string>
               <string name="Source"><![CDATA[--[[
@@ -7981,13 +8664,13 @@ return Animator
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="54">
+          <Item class="ModuleScript" referent="55">
             <Properties>
               <string name="Name">ArmyUI</string>
               <string name="Source"><![CDATA[--[[
 	ArmyUI
 	Your forces: unit-type cards with 3D previews, roles, stats and how many
-	are at home vs. on the mainland, plus DEPLOY ALL / RECALL ALL / COMMAND.
+	are at home vs. out at the front, plus DEPLOY ALL / RECALL ALL / COMMAND.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8023,7 +8706,7 @@ local ROLE_COLORS = {
 }
 
 function ArmyUI.open()
-	local win = Modal.open("Army Command", "Build vehicles in Military Factories · deploy them to the mainland", 980, 620)
+	local win = Modal.open("Army Command", "Build vehicles in Military Factories · they drive over your bridge to the front", 980, 620)
 	local ic = Icons.tank(36, Color3.fromRGB(170, 200, 130))
 	ic.Position = UDim2.fromOffset(8, 6)
 	ic.Parent = win.iconHolder
@@ -8034,7 +8717,7 @@ function ArmyUI.open()
 	for _, m in mine do
 		local id = m:GetAttribute("UnitId") :: string
 		byType[id] = byType[id] or { home = 0, mainland = 0 }
-		if m:GetAttribute("Location") == "mainland" then
+		if (m:GetAttribute("Location") or "home") ~= "home" then
 			byType[id].mainland += 1
 			deployed += 1
 		else
@@ -8049,7 +8732,7 @@ function ArmyUI.open()
 		Lib.display({ Text = value, TextSize = 22, TextColor3 = color, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 0, 26), Parent = card })
 	end
 	stat("Vehicles", ("%d / %d"):format(ClientState.get("units") or #mine, ClientState.get("unitCap") or 10), C.Text, 1)
-	stat("On the mainland", tostring(deployed), C.Military, 2)
+	stat("Out at the front", tostring(deployed), C.Military, 2)
 	local function action(name: string, text: string, variant: string, order: number, fn: () -> ())
 		Lib.button({ Name = name, Variant = variant, Text = text, TextSize = 13, Size = UDim2.fromOffset(150, 44), LayoutOrder = order, Parent = top, Activated = fn })
 	end
@@ -8075,7 +8758,7 @@ function ArmyUI.open()
 		Modal.close()
 		Hub.call("goWar", "mainland")
 		for _, m in UnitView.mine() do
-			if m:GetAttribute("Location") == "mainland" then
+			if (m:GetAttribute("Location") or "home") ~= "home" then
 				UnitView.select(m, true)
 			end
 		end
@@ -8134,7 +8817,7 @@ return ArmyUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="55">
+          <Item class="ModuleScript" referent="56">
             <Properties>
               <string name="Name">BuildMenu</string>
               <string name="Source"><![CDATA[--[[
@@ -8147,9 +8830,11 @@ return ArmyUI
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage.Shared
+local Config = require(Shared.Config)
 local Buildings = require(Shared.Catalog.Buildings)
 local Weapons = require(Shared.Catalog.Weapons)
 local Research = require(Shared.Catalog.Research)
@@ -8509,7 +9194,7 @@ end
 local function toolButton(parent: Instance, label: string, key: string, icon: string, order: number, onClick: () -> ()): TextButton
 	local btn = Lib.button({
 		Name = label,
-		Size = UDim2.fromOffset(62, 50),
+		Size = UDim2.fromOffset(50, 50),
 		BackgroundColor3 = C.Raised,
 		LayoutOrder = order,
 		Parent = parent,
@@ -8519,7 +9204,7 @@ local function toolButton(parent: Instance, label: string, key: string, icon: st
 	ic.AnchorPoint = Vector2.new(0.5, 0)
 	ic.Position = UDim2.new(0.5, 0, 0, 8)
 	ic.Parent = btn
-	Lib.display({ Text = label, TextSize = 10, TextColor3 = C.TextSoft, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.new(0, 0, 1, -18), Size = UDim2.new(1, 0, 0, 14), Parent = btn })
+	Lib.display({ Name = "Label", Text = label, TextSize = 9, TextColor3 = C.TextSoft, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.new(0, 0, 1, -18), Size = UDim2.new(1, 0, 0, 14), Parent = btn })
 	if key ~= "" then
 		Lib.text({ Text = key, FontFace = Theme.Font.Mono, TextSize = 9, TextColor3 = C.Faint, Position = UDim2.fromOffset(4, 2), Size = UDim2.fromOffset(10, 10), Parent = btn })
 	end
@@ -8534,7 +9219,7 @@ local function buildRight(parent: Frame)
 	refs.detailPrice = Lib.display({ Text = "", TextSize = 20, TextColor3 = C.Good, Position = UDim2.fromOffset(188, 52), Size = UDim2.new(1, -198, 0, 22), Parent = parent })
 	refs.detailTime = Lib.text({ Text = "", FontFace = Theme.Font.BodyBold, TextSize = 12, TextColor3 = C.Info, Position = UDim2.fromOffset(188, 76), Size = UDim2.new(1, -198, 0, 16), Parent = parent })
 	refs.detailReq = Lib.text({
-		Text = "Pick something from the list to place it on your land.",
+		Text = "Pick anything and build it anywhere on your island, at any angle. Roads are drawn point to point.",
 		TextSize = 12,
 		TextColor3 = C.TextSoft,
 		TextWrapped = true,
@@ -8564,11 +9249,14 @@ local function buildRight(parent: Frame)
 	refs.toolRotate = toolButton(tools, "ROTATE", "6", "undo", 5, function()
 		Placement.rotate()
 	end)
+	refs.toolSnap = toolButton(tools, "SNAP", "G", "target", 6, function()
+		Placement.toggleSnap()
+	end)
 	local close = Lib.button({
 		Name = "Close",
 		Variant = "danger",
-		Size = UDim2.fromOffset(62, 50),
-		LayoutOrder = 6,
+		Size = UDim2.fromOffset(50, 50),
+		LayoutOrder = 7,
 		Parent = tools,
 		Activated = function()
 			BuildMenu.close()
@@ -8610,7 +9298,7 @@ function BuildMenu.refreshDetail()
 		refs.detailPrice.Text = ""
 		refs.detailTime.Text = ""
 		refs.detailReq.Text = s.tool == "delete" and "Click a building to remove it. 50% refund (100% while it's still under construction)."
-			or (s.tool == "move" and "Click a building, then click its new spot. R rotates it." or "Pick something from the list to place it on your land.")
+			or (s.tool == "move" and "Click a building, then click its new spot. R rotates it." or "Pick anything and build it anywhere on your island, at any angle. Roads are drawn point to point.")
 	end
 end
 
@@ -8624,6 +9312,11 @@ local function refreshTools()
 	mark(refs.toolDelete, s.tool == "delete")
 	mark(refs.toolMove, s.tool == "move")
 	mark(refs.toolDrag, s.drag)
+	mark(refs.toolSnap, s.snap == "grid")
+	local snapLabel = refs.toolSnap:FindFirstChild("Label") :: TextLabel?
+	if snapLabel then
+		snapLabel.Text = s.snap == "grid" and "GRID" or "FREE"
+	end
 	for _, entry in cards do
 		updateCard(entry)
 	end
@@ -8639,11 +9332,27 @@ function BuildMenu.refreshTooltip()
 		return
 	end
 	tooltip.Visible = true
-	if def then
-		refs.tipName.Text = (s.moving and "MOVING " or "") .. string.upper(def.name)
+	local cash = ClientState.get("cash") or 0
+	local snap = s.snap == "grid" and "G FREE" or "G GRID"
+	if def and def.id == "road" and not s.moving then
+		local road = s.road
+		if road then
+			refs.tipName.Text = ("ROAD  ·  %d STUDS"):format(math.floor(road.len + 0.5))
+			refs.tipPrice.Text = "$" .. Format.commas(road.cost)
+			refs.tipPrice.TextColor3 = road.valid and C.Good or C.Bad
+			refs.tipHint.Text = "CLICK NEXT POINT  ·  SAME SPOT / RMB / Q FINISH  ·  SHIFT 15°"
+		else
+			refs.tipName.Text = "ROAD"
+			refs.tipPrice.Text = ("$%s / %d studs"):format(Format.commas(def.cost), def.size[2] * Config.CellSize)
+			refs.tipPrice.TextColor3 = cash >= def.cost and C.Good or C.Bad
+			refs.tipHint.Text = "CLICK START, THEN CLICK OR DRAG TO DRAW  ·  ENDS SNAP TO ROADS  ·  " .. snap
+		end
+	elseif def then
+		refs.tipName.Text = ("%s%s  ·  %d°"):format(s.moving and "MOVING " or "", string.upper(def.name), math.floor(s.rotation + 0.5) % 360)
 		refs.tipPrice.Text = s.moving and "" or ("$" .. Format.commas(def.cost))
-		refs.tipPrice.TextColor3 = (ClientState.get("cash") or 0) >= def.cost and C.Good or C.Bad
-		refs.tipHint.Text = s.drag and "HOLD LMB + DRAG  ·  R ROTATE  ·  Q CANCEL" or "LMB PLACE  ·  R ROTATE  ·  Q CANCEL"
+		refs.tipPrice.TextColor3 = cash >= def.cost and C.Good or C.Bad
+		local rot = s.snap == "grid" and "R ROTATE 90°" or "R / SHIFT+R ROTATE 15°  ·  AUTO-ALIGNS TO ROADS (ALT OFF)"
+		refs.tipHint.Text = (s.drag and "HOLD LMB + DRAG A ROW" or "LMB PLACE") .. "  ·  " .. rot .. "  ·  " .. snap .. "  ·  Q CANCEL"
 	else
 		refs.tipName.Text = s.tool == "delete" and "DEMOLISH MODE" or "MOVE MODE"
 		refs.tipPrice.Text = ""
@@ -8780,6 +9489,11 @@ function BuildMenu.init(gui: GuiObject)
 	refs.tipHint = Lib.text({ Text = "", FontFace = Theme.Font.Mono, TextSize = 10, TextColor3 = C.Muted, Position = UDim2.new(0.42, 0, 0, 0), Size = UDim2.new(0.58, -130, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, Parent = tooltip })
 
 	Placement.onChanged(refreshTools)
+	RunService.RenderStepped:Connect(function()
+		if root.Visible and Placement.state().drawing then
+			BuildMenu.refreshTooltip()
+		end
+	end)
 	ClientState.onAny(function(patch)
 		if not root.Visible then
 			return
@@ -8818,7 +9532,7 @@ return BuildMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="56">
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">BuildingPanel</string>
               <string name="Source"><![CDATA[--[[
@@ -9382,7 +10096,7 @@ return BuildingPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="58">
             <Properties>
               <string name="Name">Effects</string>
               <string name="Source"><![CDATA[--[[
@@ -9735,7 +10449,7 @@ return Effects
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="59">
             <Properties>
               <string name="Name">HUD</string>
               <string name="Source"><![CDATA[--[[
@@ -10301,14 +11015,16 @@ return HUD
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="59">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">Minimap</string>
               <string name="Source"><![CDATA[--[[
 	Minimap
 	Radar scope in the bottom-right corner with a rotating sweep.
-	  home:  your buildings (coloured by category), vehicles and you
-	  war:   the mainland's strategic points (coloured by owner) and units
+	  home:  your island (front edge up): buildings coloured by category,
+	         vehicles and you
+	  war:   the whole map: the central battlefield, every island and
+	         bridge, strategic points (coloured by owner) and vehicles
 ]]
 
 local Players = game:GetService("Players")
@@ -10366,17 +11082,34 @@ local function dot(pos: Vector2, size: number, color: Color3, round: boolean?)
 	d.Position = UDim2.fromOffset(SIZE / 2 + pos.X, SIZE / 2 + pos.Y)
 	d.Size = UDim2.fromOffset(size, size)
 	d.BackgroundColor3 = color
+	d.BackgroundTransparency = 0
 	d.Rotation = 0
 	;(d:FindFirstChild("Round") :: UICorner).CornerRadius = UDim.new(round and 1 or 0, 0)
 	return d
 end
 
-local function project(world: Vector3, center: Vector3, scale: number): Vector2?
-	local v = Vector2.new(world.X - center.X, world.Z - center.Z) * scale
+-- frame: draw in that frame's local axes (local -Z up the screen).
+local function project(world: Vector3, center: Vector3, scale: number, frame: CFrame?): Vector2?
+	local v
+	if frame then
+		local l = frame:PointToObjectSpace(world)
+		v = Vector2.new(l.X, l.Z) * scale
+	else
+		v = Vector2.new(world.X - center.X, world.Z - center.Z) * scale
+	end
 	if v.Magnitude > R - 2 then
 		return nil
 	end
 	return v
+end
+
+local function ownerOfPlot(index: number): Player?
+	for _, p in Players:GetPlayers() do
+		if p:GetAttribute("PlotIndex") == index then
+			return p
+		end
+	end
+	return nil
 end
 
 local function redraw()
@@ -10384,10 +11117,32 @@ local function redraw()
 	local mode = ClientState.mode
 	local war = mode == "war"
 	local center, scale
+	local frame: CFrame? = nil
 	if war then
 		center = Config.MainlandOrigin
-		scale = R / (Config.MainlandSize / 2 + 60)
-		label.Text = "THEATER // MAINLAND"
+		scale = R / (Config.PlotRingRadius + Grid.PlotSize * 0.72)
+		label.Text = "THEATER // ALL FRONTS"
+		-- battlefield, bridges and islands
+		local land = dot(Vector2.zero, Config.MainlandRadius * 2 * scale, Color3.fromRGB(60, 84, 50), true)
+		land.BackgroundTransparency = 0.35
+		for i = 1, Config.MaxPlots do
+			local owner = ownerOfPlot(i)
+			local col = owner == player and C.Accent
+				or (owner and ((owner:GetAttribute("Pvp") == true) and C.Bad or C.Muted) or C.Faint)
+			local v = project(Grid.plotOrigin(i), center, scale)
+			if v then
+				local isl = dot(v, Grid.PlotSize * scale, col)
+				isl.Rotation = -math.deg(Grid.plotAngle(i))
+				isl.BackgroundTransparency = owner and 0.25 or 0.7
+			end
+			local mid = (Grid.shore(i) + Grid.gate(i)) / 2
+			local bv = project(mid, center, scale)
+			if bv then
+				local bridge = dot(bv, 2, C.TextSoft)
+				bridge.Size = UDim2.fromOffset(2, math.max(2, (Grid.gate(i) - Grid.shore(i)).Magnitude * scale))
+				bridge.Rotation = -math.deg(Grid.plotAngle(i))
+			end
+		end
 		local points = workspace:FindFirstChild("Mainland") and workspace.Mainland:FindFirstChild("Points")
 		if points then
 			for _, p in points:GetChildren() do
@@ -10397,7 +11152,7 @@ local function redraw()
 					if v then
 						local owner = (p:GetAttribute("Owner") :: number?) or 0
 						local col = owner == 0 and C.Muted or (owner == player.UserId and C.Good or ((p:GetAttribute("Color") :: Color3?) or C.Bad))
-						dot(v, 9, col).Rotation = 45
+						dot(v, 7, col).Rotation = 45
 					end
 				end
 			end
@@ -10408,8 +11163,11 @@ local function redraw()
 			return
 		end
 		center = Grid.plotOrigin(idx)
-		scale = R / (Grid.PlotSize / 2 + 30)
+		frame = Grid.plotCFrame(idx)
+		scale = R / (Grid.PlotSize / 2 * 1.42 + 20)
 		label.Text = "SECTOR // HOME"
+		local isl = dot(Vector2.zero, Grid.PlotSize * scale, Color3.fromRGB(46, 70, 42))
+		isl.BackgroundTransparency = 0.4
 		local homeland = workspace:FindFirstChild("Homeland")
 		local plot = homeland and homeland:FindFirstChild("Plot_" .. idx)
 		local folder = plot and plot:FindFirstChild("Buildings")
@@ -10419,16 +11177,20 @@ local function redraw()
 					local def = Buildings.get(b:GetAttribute("BuildingId") :: string)
 					local base = b.PrimaryPart
 					if def and base then
-						local v = project(base.CFrame.Position, center, scale)
+						local v = project(base.CFrame.Position, center, scale, frame)
 						if v then
-							local s = math.clamp(math.max(def.size[1], def.size[2]) * Grid.CellSize * scale, 2, 14)
 							local col = TAB_COLORS[def.tab] or C.TextSoft
 							if b:GetAttribute("Damaged") then
 								col = C.Bad
 							elseif b:GetAttribute("FinishAt") then
 								col = col:Lerp(C.Panel, 0.5)
 							end
-							dot(v, s, col)
+							local len = b:GetAttribute("Len") :: number?
+							local w = math.max(def.size[1] * Grid.CellSize * scale, 1.5)
+							local d = math.max((len or def.size[2] * Grid.CellSize) * scale, 1.5)
+							local f = dot(v, w, col)
+							f.Size = UDim2.fromOffset(w, d)
+							f.Rotation = -((b:GetAttribute("Angle") :: number?) or 0)
 						end
 					end
 				end
@@ -10440,7 +11202,7 @@ local function redraw()
 		for _, u in units:GetChildren() do
 			local root = u:IsA("Model") and u.PrimaryPart
 			if root then
-				local v = project(root.CFrame.Position, center, scale)
+				local v = project(root.CFrame.Position, center, scale, frame)
 				if v then
 					local mine = u:GetAttribute("OwnerId") == player.UserId
 					dot(v, 5, mine and C.Teal or C.Bad, true)
@@ -10451,10 +11213,10 @@ local function redraw()
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if hrp and not war then
-		local v = project(hrp.CFrame.Position, center, scale)
+		local v = project(hrp.CFrame.Position, center, scale, frame)
 		if v then
 			local d = dot(v, 8, C.Accent)
-			local look = hrp.CFrame.LookVector
+			local look = frame and frame:VectorToObjectSpace(hrp.CFrame.LookVector) or hrp.CFrame.LookVector
 			d.Rotation = math.deg(math.atan2(look.X, -look.Z)) + 45
 		end
 	end
@@ -10545,7 +11307,7 @@ return Minimap
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">Modal</string>
               <string name="Source"><![CDATA[--[[
@@ -10795,7 +11557,7 @@ return Modal
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="61">
+          <Item class="ModuleScript" referent="62">
             <Properties>
               <string name="Name">NationUI</string>
               <string name="Source"><![CDATA[--[[
@@ -11152,7 +11914,7 @@ return NationUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="62">
+          <Item class="ModuleScript" referent="63">
             <Properties>
               <string name="Name">NightLights</string>
               <string name="Source"><![CDATA[--[[
@@ -11279,7 +12041,7 @@ return NightLights
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="63">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">Notifications</string>
               <string name="Source"><![CDATA[--[[
@@ -11428,18 +12190,25 @@ return Notifications
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">Placement</string>
               <string name="Source"><![CDATA[--[[
 	Placement
-	Ghost previews and every build tool:
-	  place  - LMB place (stays selected for fast building), R rotate
-	  drag   - hold and drag to paint a line (roads, or any item with Drag on)
+	Free-form building. Anything goes anywhere on your island, at any angle:
+
+	  place  - LMB places (stays selected for fast building)
+	  rotate - R turns 15 deg (Shift+R back), 90 deg in GRID mode
+	  snap   - G toggles FREE / GRID (4-stud grid, quarter turns)
+	  align  - in FREE mode, buildings near a road turn to face it and sit
+	           flush with the kerb (hold Alt to place freely)
+	  roads  - click-click (or drag) to draw a road of any length/direction;
+	           it keeps going from the last point until you click the same
+	           spot twice, right-click or press Q. Ends snap to other roads.
+	  drag   - hold and drag to lay a row of the selected building
 	  delete - click a building to demolish it (hotkey 2)
 	  undo   - hotkey 3
 	  move   - click a building, then click its new spot (hotkey 5)
-	  rotate - R / hotkey 6
 	When nothing is selected, clicking one of your buildings opens its panel.
 ]]
 
@@ -11449,8 +12218,10 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage.Shared
+local Config = require(Shared.Config)
 local Buildings = require(Shared.Catalog.Buildings)
 local Grid = require(Shared.Util.Grid)
+local Footprint = require(Shared.Util.Footprint)
 local ModelBuilder = require(Shared.ModelBuilder)
 local Net = require(Shared.Net)
 
@@ -11468,10 +12239,17 @@ local camera = workspace.CurrentCamera
 local VALID = Color3.fromRGB(80, 220, 120)
 local INVALID = Color3.fromRGB(235, 70, 60)
 local MOVE = Color3.fromRGB(80, 160, 255)
+local ROAD = Color3.fromRGB(255, 180, 54)
+
+local HALF = Grid.PlotSize / 2 - 0.5
+local ROAD_SNAP = 7 -- studs: endpoints join existing road ends / centrelines
+
+type Other = { uid: number, rect: Footprint.Rect, ground: boolean, road: boolean }
 
 local selected: any = nil
 local tool: string? = nil -- nil | "delete" | "move"
-local rotation = 0
+local angle = 0 -- degrees, island-local
+local snapMode = "free" -- "free" | "grid"
 local dragMode = false
 local pointer = Vector2.new(0, 0)
 
@@ -11479,14 +12257,21 @@ local ghost: Model? = nil
 local plate: Part? = nil
 local highlight: Highlight? = nil
 local hoverHighlight: Highlight
-local dragStart: Vector2? = nil -- cell
-local dragTiles: { Part } = {}
 local moving: Model? = nil -- building being moved
-local lastCell: Vector2? = nil
+local movingLen: number? = nil
+local spot: { x: number, z: number, a: number, valid: boolean }? = nil
+local dragStart: Vector2? = nil -- local studs (row drag)
+local dragTiles: { Part } = {}
+local roadAnchor: Vector2? = nil -- start of the road being drawn
+local roadPress: Vector2? = nil
+local roadPressAnchored = false
+local roadPreview: Part? = nil
+local roadInfo: { len: number, cost: number, valid: boolean }? = nil
 local listeners: { () -> () } = {}
 
--- client-side occupancy (rebuilt from the plot's building models)
-local occupied: { [number]: number } = {}
+-- client-side copy of the island's footprints (rebuilt from building models)
+local others: { [number]: Other } = {}
+local hash: Footprint.Hash = {}
 
 local function notifyChanged()
 	for _, fn in listeners do
@@ -11499,19 +12284,24 @@ function Placement.onChanged(fn: () -> ())
 end
 
 function Placement.state()
-	return { def = selected, tool = tool, rotation = rotation, drag = dragMode, moving = moving ~= nil }
+	return {
+		def = selected,
+		tool = tool,
+		rotation = angle,
+		drag = dragMode,
+		moving = moving ~= nil,
+		snap = snapMode,
+		road = roadInfo,
+		drawing = roadAnchor ~= nil,
+	}
 end
 
-local function plotOrigin(): Vector3?
-	local idx = ClientState.get("plot")
-	if not idx then
-		return nil
-	end
-	return Grid.plotOrigin(idx)
+local function plotIndex(): number?
+	return ClientState.get("plot")
 end
 
 local function buildingsFolder(): Folder?
-	local idx = ClientState.get("plot")
+	local idx = plotIndex()
 	if not idx then
 		return nil
 	end
@@ -11520,49 +12310,53 @@ local function buildingsFolder(): Folder?
 	return plot and plot:FindFirstChild("Buildings") :: Folder? or nil
 end
 
-local function footprintFromModel(model: Model): (number?, number?, number?, number?, number?)
-	local def = Buildings.get(model:GetAttribute("BuildingId") :: string)
-	local origin = plotOrigin()
-	if not def or not origin then
-		return nil
-	end
-	local pivot = model:GetPivot()
-	local _, yaw, _ = pivot:ToOrientation()
-	local r = math.floor(math.deg(yaw) / 90 + 0.5) % 4
-	local fw, fd = Grid.footprint(def.size[1], def.size[2], r)
-	local x, z = Grid.worldToCell(origin, pivot.Position, fw, fd)
-	return x, z, fw, fd, r
+local function isSegment(def): boolean
+	return def ~= nil and def.id == "road"
+end
+
+local function isGround(def): boolean
+	return def ~= nil and (def.id == "road" or def.id == "plaza")
+end
+
+local function rectFor(def, x: number, z: number, a: number, len: number?): Footprint.Rect
+	local w, d = Footprint.size(def, len)
+	return Footprint.rect(x, z, w, d, a)
 end
 
 local function rebuildOccupancy()
-	table.clear(occupied)
+	table.clear(others)
+	table.clear(hash)
 	local folder = buildingsFolder()
 	if not folder then
 		return
 	end
 	for _, model in folder:GetChildren() do
 		if model:IsA("Model") and model ~= moving then
-			local x, z, fw, fd = footprintFromModel(model)
-			if x and z and fw and fd then
-				local uid = model:GetAttribute("Uid") :: number
-				for cx = x, x + fw - 1 do
-					for cz = z, z + fd - 1 do
-						occupied[Grid.key(cx, cz)] = uid
-					end
-				end
+			local def = Buildings.get(model:GetAttribute("BuildingId") :: string)
+			local px, pz = model:GetAttribute("PX") :: number?, model:GetAttribute("PZ") :: number?
+			local uid = model:GetAttribute("Uid") :: number?
+			if def and px and pz and uid then
+				local rect = rectFor(def, px, pz, (model:GetAttribute("Angle") :: number?) or 0, model:GetAttribute("Len") :: number?)
+				others[uid] = { uid = uid, rect = rect, ground = isGround(def), road = isSegment(def) }
+				Footprint.hashAdd(hash, uid, rect)
 			end
 		end
 	end
 end
 
-local function canPlaceLocal(def, x: number, z: number, r: number): boolean
-	local fw, fd = Grid.footprint(def.size[1], def.size[2], r)
-	if not Grid.inBounds(x, z, fw, fd) then
+local function canPlaceLocal(def, x: number, z: number, a: number, len: number?): boolean
+	local rect = rectFor(def, x, z, a, len)
+	if not Footprint.inside(rect, HALF) then
 		return false
 	end
-	for cx = x, x + fw - 1 do
-		for cz = z, z + fd - 1 do
-			if occupied[Grid.key(cx, cz)] then
+	local ground = isGround(def)
+	-- a road's round end caps count against buildings (same rule as the server)
+	local mine = isSegment(def) and Footprint.capped(rect) or rect
+	for uid in Footprint.hashQuery(hash, mine) do
+		local o = others[uid]
+		if o and not (ground and o.ground) then
+			local theirs = o.road and Footprint.capped(o.rect) or o.rect
+			if Footprint.overlaps(mine, theirs) then
 				return false
 			end
 		end
@@ -11573,6 +12367,13 @@ end
 ---------------------------------------------------------------------------
 -- Ghost visuals
 ---------------------------------------------------------------------------
+local function clearDragTiles()
+	for _, t in dragTiles do
+		t:Destroy()
+	end
+	table.clear(dragTiles)
+end
+
 local function clearGhost()
 	if ghost then
 		ghost:Destroy()
@@ -11582,17 +12383,37 @@ local function clearGhost()
 		plate:Destroy()
 		plate = nil
 	end
-	highlight = nil
-	for _, t in dragTiles do
-		t:Destroy()
+	if roadPreview then
+		roadPreview:Destroy()
+		roadPreview = nil
 	end
-	table.clear(dragTiles)
-	lastCell = nil
+	highlight = nil
+	clearDragTiles()
+	spot = nil
+	roadInfo = nil
 end
 
-local function makeGhost(def)
+local function neon(name: string, transparency: number): Part
+	local p = Instance.new("Part")
+	p.Name = name
+	p.Anchored = true
+	p.CanCollide = false
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Material = Enum.Material.Neon
+	p.Transparency = transparency
+	p.Parent = workspace
+	return p
+end
+
+local function makeGhost(def, len: number?)
 	clearGhost()
-	local m = ModelBuilder.building(def)
+	local m
+	if isSegment(def) then
+		m = ModelBuilder.roadSegment(def.size[1] * Grid.CellSize, len or def.size[2] * Grid.CellSize)
+	else
+		m = ModelBuilder.building(def)
+	end
 	for _, d in m:GetDescendants() do
 		if d:IsA("BasePart") then
 			d.CanCollide = false
@@ -11611,33 +12432,16 @@ local function makeGhost(def)
 	m.Name = "Ghost"
 	m.Parent = workspace
 	ghost = m
-
-	local p = Instance.new("Part")
-	p.Name = "GhostPlate"
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanQuery = false
-	p.CanTouch = false
-	p.Material = Enum.Material.Neon
-	p.Transparency = 0.55
-	p.Parent = workspace
-	plate = p
-end
-
-local function tilePart(): Part
-	local p = Instance.new("Part")
-	p.Anchored = true
-	p.CanCollide = false
-	p.CanQuery = false
-	p.CanTouch = false
-	p.Material = Enum.Material.Neon
-	p.Transparency = 0.45
-	p.Parent = workspace
-	return p
+	plate = neon("GhostPlate", 0.55)
+	if isSegment(def) and not moving then
+		local preview = neon("RoadPreview", 0.35)
+		preview.Parent = nil
+		roadPreview = preview
+	end
 end
 
 ---------------------------------------------------------------------------
--- Pointer -> world
+-- Pointer -> island
 ---------------------------------------------------------------------------
 local function groundHit(): Vector3?
 	local ray = camera:ScreenPointToRay(pointer.X, pointer.Y)
@@ -11645,10 +12449,21 @@ local function groundHit(): Vector3?
 		return nil
 	end
 	local t = -ray.Origin.Y / ray.Direction.Y
-	if t < 0 or t > 3000 then
+	if t < 0 or t > 4000 then
 		return nil
 	end
 	return ray.Origin + ray.Direction * t
+end
+
+-- Pointer in island-local studs.
+local function localHit(): Vector2?
+	local idx = plotIndex()
+	local hit = groundHit()
+	if not idx or not hit then
+		return nil
+	end
+	local l = Grid.toLocal(idx, hit)
+	return Vector2.new(l.X, l.Z)
 end
 
 local function buildingUnderPointer(): Model?
@@ -11660,7 +12475,7 @@ local function buildingUnderPointer(): Model?
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Include
 	params.FilterDescendantsInstances = { folder }
-	local result = workspace:Raycast(ray.Origin, ray.Direction * 3000, params)
+	local result = workspace:Raycast(ray.Origin, ray.Direction * 4000, params)
 	if not result then
 		return nil
 	end
@@ -11671,42 +12486,134 @@ local function buildingUnderPointer(): Model?
 	return inst and inst:IsA("Model") and inst or nil
 end
 
-local function cellAt(def, r: number): (number?, number?)
-	local origin = plotOrigin()
-	local hit = groundHit()
-	if not origin or not hit then
-		return nil
-	end
-	local fw, fd = Grid.footprint(def.size[1], def.size[2], r)
-	return Grid.worldToCell(origin, hit, fw, fd)
+local function closestOnSegment(p: Vector2, a: Vector2, b: Vector2): (Vector2, number)
+	local ab = b - a
+	local t = ab.Magnitude > 1e-6 and math.clamp((p - a):Dot(ab) / ab:Dot(ab), 0, 1) or 0
+	return a + ab * t, t
 end
 
--- cells for a straight drag line from a to b (dominant axis), stepping by footprint
-local function dragCells(def, a: Vector2, b: Vector2, r: number): { { number } }
-	local fw, fd = Grid.footprint(def.size[1], def.size[2], r)
-	local out = {}
-	local dx, dz = b.X - a.X, b.Y - a.Y
-	if math.abs(dx) >= math.abs(dz) then
-		local steps = math.floor(math.abs(dx) / fw + 0.5)
-		local dir = dx >= 0 and 1 or -1
-		for i = 0, math.min(steps, 120) do
-			table.insert(out, { a.X + i * fw * dir, a.Y })
-		end
-	else
-		local steps = math.floor(math.abs(dz) / fd + 0.5)
-		local dir = dz >= 0 and 1 or -1
-		for i = 0, math.min(steps, 120) do
-			table.insert(out, { a.X, a.Y + i * fd * dir })
+-- Snap a road end to nearby road ends, then onto nearby road centrelines.
+local function snapRoadPoint(p: Vector2): (Vector2, boolean)
+	local best, bestD = nil, ROAD_SNAP
+	local rect = Footprint.rect(p.X, p.Y, ROAD_SNAP * 2, ROAD_SNAP * 2, 0)
+	local near = Footprint.hashQuery(hash, rect, ROAD_SNAP)
+	for uid in near do
+		local o = others[uid]
+		if o and o.road then
+			local a, b = Footprint.ends(o.rect)
+			for _, e in { a, b } do
+				local d = (e - p).Magnitude
+				if d < bestD then
+					best, bestD = e, d
+				end
+			end
 		end
 	end
-	return out
+	if best then
+		return best, true
+	end
+	for uid in near do
+		local o = others[uid]
+		if o and o.road then
+			local a, b = Footprint.ends(o.rect)
+			local c = closestOnSegment(p, a, b)
+			local d = (c - p).Magnitude
+			if d < bestD then
+				best, bestD = c, d
+			end
+		end
+	end
+	if best then
+		return best, true
+	end
+	return p, false
+end
+
+-- Building footprint position for the pointer (snap / align applied).
+local function solveSpot(def, p: Vector2, len: number?): (number, number, number)
+	local w, d = Footprint.size(def, len)
+	if snapMode == "grid" then
+		local a = (math.floor(angle / 90 + 0.5) * 90) % 360
+		local x, z = Grid.snapLocal(p.X, p.Y, w, d, a)
+		return x, z, a
+	end
+	-- align to the nearest road so the front (-Z) faces the kerb
+	if not isGround(def) and not UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt) then
+		local reach = d / 2 + 10
+		local rect = Footprint.rect(p.X, p.Y, reach * 2, reach * 2, 0)
+		local best, bestD, bestRoad = nil, math.huge, nil
+		for uid in Footprint.hashQuery(hash, rect, reach) do
+			local o = others[uid]
+			if o and o.road then
+				local a, b = Footprint.ends(o.rect)
+				local c = closestOnSegment(p, a, b)
+				local dist = (c - p).Magnitude
+				if dist < o.rect.hw + reach and dist < bestD then
+					best, bestD, bestRoad = c, dist, o
+				end
+			end
+		end
+		if best and bestRoad then
+			local a, b = Footprint.ends(bestRoad.rect)
+			local dir = (b - a).Unit
+			local normal = Vector2.new(-dir.Y, dir.X)
+			if (p - best):Dot(normal) < 0 then
+				normal = -normal
+			end
+			local yaw = math.deg(math.atan2(normal.X, normal.Y)) % 360
+			local centre = best + normal * (bestRoad.rect.hw + 0.4 + d / 2)
+			return math.floor(centre.X * 20 + 0.5) / 20, math.floor(centre.Y * 20 + 0.5) / 20, yaw
+		end
+	end
+	return math.floor(p.X * 2 + 0.5) / 2, math.floor(p.Y * 2 + 0.5) / 2, angle
+end
+
+local function cashOk(cost: number): boolean
+	return (ClientState.get("cash") or 0) >= cost
+end
+
+local function roadCost(def, len: number): number
+	return def.cost * math.max(1, math.ceil(len / (def.size[2] * Grid.CellSize) - 0.01))
+end
+
+-- Road end point for the pointer (grid / snapping / max length applied).
+local function roadPoint(p: Vector2): Vector2
+	local q = p
+	if snapMode == "grid" then
+		q = Vector2.new(math.floor(q.X / Grid.CellSize + 0.5) * Grid.CellSize, math.floor(q.Y / Grid.CellSize + 0.5) * Grid.CellSize)
+	end
+	local snapped
+	q, snapped = snapRoadPoint(q)
+	local anchor = roadAnchor
+	if anchor and not snapped then
+		local v = q - anchor
+		if v.Magnitude > 0.5 then
+			local step = snapMode == "grid" and 45 or (UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and 15 or 0)
+			if step > 0 then
+				local a = math.atan2(v.X, v.Y)
+				a = math.rad(math.floor(math.deg(a) / step + 0.5) * step)
+				q = anchor + Vector2.new(math.sin(a), math.cos(a)) * v.Magnitude
+			end
+		end
+		local l = (q - anchor).Magnitude
+		if l > Config.RoadMaxLength then
+			q = anchor + (q - anchor).Unit * Config.RoadMaxLength
+		end
+	end
+	return q
 end
 
 ---------------------------------------------------------------------------
 -- Per-frame update
 ---------------------------------------------------------------------------
-local function cashOk(def): boolean
-	return (ClientState.get("cash") or 0) >= def.cost
+local function paint(color: Color3)
+	if plate then
+		plate.Color = color
+	end
+	if highlight then
+		highlight.FillColor = color
+		highlight.OutlineColor = color
+	end
 end
 
 local function update()
@@ -11726,55 +12633,100 @@ local function update()
 	hoverHighlight.Enabled = hovered ~= nil
 
 	local def = selected
-	if not active or not def or not ghost or not plate then
+	local idx = plotIndex()
+	if not active or not def or not ghost or not plate or not idx then
 		return
 	end
-	local origin = plotOrigin()
-	if not origin then
-		return
-	end
-	local x, z = cellAt(def, rotation)
-	if not x or not z then
+	local p = localHit()
+	if not p then
 		ghost.Parent = nil
 		plate.Parent = nil
+		spot = nil
 		return
 	end
-	ghost.Parent = workspace
-	plate.Parent = workspace
 
-	local valid = canPlaceLocal(def, x, z, rotation) and (moving ~= nil or cashOk(def))
-	local cf = Grid.cframeFor(origin, x, z, def.size[1], def.size[2], rotation)
-	ghost:PivotTo(cf)
-	local fw, fd = Grid.footprint(def.size[1], def.size[2], rotation)
-	plate.Size = Vector3.new(fw * Grid.CellSize - 0.2, 0.1, fd * Grid.CellSize - 0.2)
-	plate.CFrame = CFrame.new(cf.Position + Vector3.new(0, 0.08, 0))
-	local color = moving and (valid and MOVE or INVALID) or (valid and VALID or INVALID)
-	plate.Color = color
-	if highlight then
-		highlight.FillColor = color
-		highlight.OutlineColor = color
+	-- drawing a road: preview the segment from the anchor
+	if isSegment(def) and not moving then
+		local q = roadPoint(p)
+		local anchor = roadAnchor
+		local w = def.size[1] * Grid.CellSize
+		if anchor and roadPreview then
+			local x, z, a, len = Footprint.segment(anchor.X, anchor.Y, q.X, q.Y)
+			len = math.max(len, 0.1)
+			local valid = len >= 2 and canPlaceLocal(def, x, z, a, len) and cashOk(roadCost(def, len))
+			roadPreview.Parent = workspace
+			roadPreview.Size = Vector3.new(w, 0.35, len + w)
+			roadPreview.CFrame = Grid.toWorld(idx, x, z, a) * CFrame.new(0, 0.2, 0)
+			roadPreview.Color = valid and ROAD or INVALID
+			roadInfo = { len = len, cost = roadCost(def, len), valid = valid }
+		elseif roadPreview then
+			roadPreview.Parent = nil
+			roadInfo = nil
+		end
+		-- the ghost tile marks the pen tip
+		ghost.Parent = workspace
+		plate.Parent = workspace
+		ghost:PivotTo(Grid.toWorld(idx, q.X, q.Y, angle))
+		plate.Size = Vector3.new(w + 1, 0.1, w + 1)
+		plate.CFrame = Grid.toWorld(idx, q.X, q.Y, angle) * CFrame.new(0, 0.08, 0)
+		paint(anchor and ROAD or VALID)
+		spot = { x = q.X, z = q.Y, a = angle, valid = true }
+		return
 	end
 
-	-- drag preview
-	if dragStart then
-		local cells = dragCells(def, dragStart, Vector2.new(x, z), rotation)
-		for i, c in cells do
+	ghost.Parent = workspace
+	plate.Parent = workspace
+	local len = moving and movingLen or nil
+	local x, z, a = solveSpot(def, p, len)
+	local cost = len and roadCost(def, len) or def.cost
+	local valid = canPlaceLocal(def, x, z, a, len) and (moving ~= nil or cashOk(cost))
+	local cf = Grid.toWorld(idx, x, z, a)
+	ghost:PivotTo(cf)
+	local w, d = Footprint.size(def, len)
+	plate.Size = Vector3.new(w - 0.2, 0.1, d - 0.2)
+	plate.CFrame = cf * CFrame.new(0, 0.08, 0)
+	paint(moving and (valid and MOVE or INVALID) or (valid and VALID or INVALID))
+	spot = { x = x, z = z, a = a, valid = valid }
+
+	-- row preview
+	local start = dragStart
+	if start then
+		local spots = Placement.rowSpots(def, start, Vector2.new(x, z), a)
+		for i, s in spots do
 			local t = dragTiles[i]
 			if not t then
-				t = tilePart()
+				t = neon("RowTile", 0.45)
 				dragTiles[i] = t
 			end
-			local tcf = Grid.cframeFor(origin, c[1], c[2], def.size[1], def.size[2], rotation)
-			t.Size = Vector3.new(fw * Grid.CellSize - 0.4, 0.3, fd * Grid.CellSize - 0.4)
-			t.CFrame = CFrame.new(tcf.Position + Vector3.new(0, 0.15, 0))
-			t.Color = canPlaceLocal(def, c[1], c[2], rotation) and VALID or INVALID
+			t.Size = Vector3.new(w - 0.4, 0.3, d - 0.4)
+			t.CFrame = Grid.toWorld(idx, s[1], s[2], a) * CFrame.new(0, 0.15, 0)
+			t.Color = canPlaceLocal(def, s[1], s[2], a) and VALID or INVALID
 		end
-		for i = #cells + 1, #dragTiles do
+		for i = #spots + 1, #dragTiles do
 			dragTiles[i]:Destroy()
 			dragTiles[i] = nil
 		end
 	end
-	lastCell = Vector2.new(x, z)
+end
+
+-- Evenly spaced copies from a to b (spacing = footprint along the drag).
+function Placement.rowSpots(def, a: Vector2, b: Vector2, yaw: number): { { number } }
+	local w, d = Footprint.size(def)
+	local v = b - a
+	if v.Magnitude < 0.5 then
+		return { { a.X, a.Y } }
+	end
+	local dir = v.Unit
+	local rad = math.rad(yaw)
+	local ux = Vector2.new(math.cos(rad), -math.sin(rad))
+	local along = math.abs(dir:Dot(ux)) >= 0.7071 and w or d
+	local n = math.min(math.floor(v.Magnitude / along + 0.5), 60)
+	local out = {}
+	for i = 0, n do
+		local p = a + dir * along * i
+		table.insert(out, { p.X, p.Y })
+	end
+	return out
 end
 
 ---------------------------------------------------------------------------
@@ -11783,20 +12735,32 @@ end
 local function toast(res)
 	if res and not res.ok and res.err then
 		Notifications.show(res.err, "bad")
+		Sounds.play("Error")
 		return false
 	end
 	return true
 end
 
+local function endRoad()
+	roadAnchor = nil
+	roadPress = nil
+	roadInfo = nil
+	if roadPreview then
+		roadPreview.Parent = nil
+	end
+	notifyChanged()
+end
+
 function Placement.select(def)
 	moving = nil
+	movingLen = nil
 	tool = nil
 	selected = def
 	dragStart = nil
-	rotation = rotation % 4
+	roadAnchor = nil
 	if def then
 		makeGhost(def)
-		dragMode = def.drag == true
+		dragMode = def.drag == true and not isSegment(def)
 	else
 		clearGhost()
 		dragMode = false
@@ -11807,6 +12771,7 @@ end
 function Placement.setTool(t: string?)
 	if moving then
 		moving = nil
+		movingLen = nil
 		rebuildOccupancy()
 	end
 	if t == tool then
@@ -11815,29 +12780,47 @@ function Placement.setTool(t: string?)
 	tool = t
 	if t then
 		selected = nil
+		roadAnchor = nil
 		clearGhost()
 	end
 	notifyChanged()
 end
 
--- Start moving a specific building (used by the building panel's Move button).
-function Placement.beginMove(target: Model)
+local function startMove(target: Model)
 	local def = Buildings.get(target:GetAttribute("BuildingId") :: string)
 	if not def then
 		return
 	end
-	local _, _, _, _, r = footprintFromModel(target)
-	rotation = r or 0
+	angle = (target:GetAttribute("Angle") :: number?) or 0
 	tool = "move"
 	selected = def
-	makeGhost(def)
 	moving = target
+	movingLen = target:GetAttribute("Len") :: number?
+	makeGhost(def, movingLen)
 	rebuildOccupancy()
 	notifyChanged()
 end
 
-function Placement.rotate()
-	rotation = (rotation + 1) % 4
+-- Start moving a specific building (used by the building panel's Move button).
+function Placement.beginMove(target: Model)
+	startMove(target)
+end
+
+function Placement.rotate(reverse: boolean?)
+	local step = snapMode == "grid" and 90 or 15
+	angle = (angle + (reverse and -step or step)) % 360
+	if snapMode == "grid" then
+		angle = (math.floor(angle / 90 + 0.5) * 90) % 360
+	end
+	notifyChanged()
+end
+
+function Placement.toggleSnap()
+	snapMode = snapMode == "free" and "grid" or "free"
+	if snapMode == "grid" then
+		angle = (math.floor(angle / 90 + 0.5) * 90) % 360
+	end
+	Sounds.play("Click", snapMode == "grid" and 1.2 or 0.9)
 	notifyChanged()
 end
 
@@ -11848,9 +12831,11 @@ end
 
 function Placement.cancel()
 	moving = nil
+	movingLen = nil
 	selected = nil
 	tool = nil
 	dragStart = nil
+	roadAnchor = nil
 	clearGhost()
 	rebuildOccupancy()
 	notifyChanged()
@@ -11864,11 +12849,21 @@ function Placement.undo()
 	end
 end
 
-local function placeAt(def, x: number, z: number)
-	local res = Net.request("PlaceBuilding", def.id, x, z, rotation)
+local function placeAt(def, x: number, z: number, a: number)
+	local res = Net.request("PlaceBuilding", def.id, x, z, a)
 	if toast(res) then
 		Sounds.play("Place")
 	end
+end
+
+-- Lay a road from a to b (local studs); returns true when placed.
+function Placement.drawRoad(def, a: Vector2, b: Vector2): boolean
+	local res = Net.request("PlaceRoad", def.id, a.X, a.Y, b.X, b.Y)
+	if toast(res) then
+		Sounds.play("Place")
+		return true
+	end
+	return false
 end
 
 local function primaryDown()
@@ -11877,14 +12872,16 @@ local function primaryDown()
 		return
 	end
 	if moving and selected then
-		if not lastCell then
+		local s = spot
+		if not s then
 			return
 		end
 		local uid = moving:GetAttribute("Uid")
-		local res = Net.request("MoveBuilding", uid, lastCell.X, lastCell.Y, rotation)
+		local res = Net.request("MoveBuilding", uid, s.x, s.z, s.a)
 		if toast(res) then
 			Sounds.play("Place")
 			moving = nil
+			movingLen = nil
 			selected = nil
 			clearGhost()
 			task.delay(0.2, rebuildOccupancy)
@@ -11905,27 +12902,27 @@ local function primaryDown()
 	if mode == "build" and tool == "move" then
 		local target = buildingUnderPointer()
 		if target then
-			local def = Buildings.get(target:GetAttribute("BuildingId") :: string)
-			if def then
-				local _, _, _, _, r = footprintFromModel(target)
-				rotation = r or 0
-				selected = def
-				makeGhost(def)
-				moving = target
-				rebuildOccupancy()
-				notifyChanged()
-			end
+			startMove(target)
 		end
 		return
 	end
 	if mode == "build" and selected then
-		if not lastCell then
+		local s = spot
+		if not s then
 			return
 		end
-		if dragMode then
-			dragStart = lastCell
+		if isSegment(selected) then
+			local p = Vector2.new(s.x, s.z)
+			roadPress = p
+			roadPressAnchored = roadAnchor ~= nil
+			if not roadAnchor then
+				roadAnchor = p
+				notifyChanged()
+			end
+		elseif dragMode then
+			dragStart = Vector2.new(s.x, s.z)
 		else
-			placeAt(selected, lastCell.X, lastCell.Y)
+			placeAt(selected, s.x, s.z, s.a)
 		end
 		return
 	end
@@ -11937,23 +12934,42 @@ local function primaryDown()
 end
 
 local function primaryUp()
-	if dragStart and selected and lastCell then
-		local cells = dragCells(selected, dragStart, lastCell, rotation)
-		dragStart = nil
-		for _, t in dragTiles do
-			t:Destroy()
+	local def = selected
+	if def and isSegment(def) and roadPress then
+		local press = roadPress
+		roadPress = nil
+		local s = spot
+		local anchor = roadAnchor
+		if not s or not anchor then
+			return
 		end
-		table.clear(dragTiles)
-		if #cells == 1 then
-			placeAt(selected, cells[1][1], cells[1][2])
+		local p = Vector2.new(s.x, s.z)
+		local dragged = (p - press).Magnitude > 4
+		if dragged or roadPressAnchored then
+			if (p - anchor).Magnitude < 2 then
+				endRoad() -- clicked the same spot twice: finish the road
+			elseif Placement.drawRoad(def, anchor, p) then
+				roadAnchor = p -- keep drawing from here
+				task.delay(0.2, rebuildOccupancy)
+				notifyChanged()
+			end
+		end
+		return
+	end
+	local start = dragStart
+	dragStart = nil
+	if start and def and spot then
+		clearDragTiles()
+		local spots = Placement.rowSpots(def, start, Vector2.new(spot.x, spot.z), spot.a)
+		if #spots == 1 then
+			placeAt(def, spots[1][1], spots[1][2], spot.a)
 		else
-			local res = Net.request("PlaceMany", selected.id, cells, rotation)
+			local res = Net.request("PlaceMany", def.id, spots, spot.a)
 			if toast(res) then
 				Sounds.play("Place")
 			end
 		end
 	end
-	dragStart = nil
 end
 
 function Placement.init()
@@ -11974,14 +12990,16 @@ function Placement.init()
 			if processed then
 				return
 			end
-			if input.UserInputType == Enum.UserInputType.Touch then
-				update() -- refresh the ghost under the finger first
-			end
+			update() -- refresh the ghost under the pointer / finger first
 			primaryDown()
+		elseif input.UserInputType == Enum.UserInputType.MouseButton2 and roadAnchor then
+			endRoad()
 		elseif not processed and ClientState.mode == "build" then
 			local key = input.KeyCode
 			if key == Enum.KeyCode.R or key == Enum.KeyCode.Six then
-				Placement.rotate()
+				Placement.rotate(UserInputService:IsKeyDown(Enum.KeyCode.LeftShift))
+			elseif key == Enum.KeyCode.G then
+				Placement.toggleSnap()
 			elseif key == Enum.KeyCode.Two then
 				Placement.setTool("delete")
 			elseif key == Enum.KeyCode.Three or (key == Enum.KeyCode.Z and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl)) then
@@ -11990,20 +13008,25 @@ function Placement.init()
 				Placement.toggleDrag()
 			elseif key == Enum.KeyCode.Five then
 				Placement.setTool("move")
-			elseif key == Enum.KeyCode.Q then
-				Placement.cancel()
+			elseif key == Enum.KeyCode.Q or key == Enum.KeyCode.Escape then
+				if roadAnchor then
+					endRoad()
+				else
+					Placement.cancel()
+				end
 			end
 		end
 	end)
 	UserInputService.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			update()
 			primaryUp()
 		end
 	end)
 
 	RunService.RenderStepped:Connect(update)
 
-	-- keep occupancy in sync with the plot
+	-- keep occupancy in sync with the island
 	local function hookFolder()
 		local folder = buildingsFolder()
 		if not folder then
@@ -12028,11 +13051,18 @@ function Placement.init()
 	end)
 end
 
+-- exposed for automated tests
+Placement._rebuild = rebuildOccupancy
+Placement._canPlace = canPlaceLocal
+Placement._solve = function(def, x: number, z: number): (number, number, number)
+	return solveSpot(def, Vector2.new(x, z))
+end
+
 return Placement
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="66">
             <Properties>
               <string name="Name">ResearchUI</string>
               <string name="Source"><![CDATA[--[[
@@ -12440,7 +13470,7 @@ return ResearchUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">RewardsUI</string>
               <string name="Source"><![CDATA[--[[
@@ -12748,7 +13778,7 @@ return RewardsUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="67">
+          <Item class="ModuleScript" referent="68">
             <Properties>
               <string name="Name">ShopUI</string>
               <string name="Source"><![CDATA[--[[
@@ -13164,7 +14194,7 @@ return ShopUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="68">
+          <Item class="ModuleScript" referent="69">
             <Properties>
               <string name="Name">Sounds</string>
               <string name="Source"><![CDATA[--[[
@@ -13235,7 +14265,7 @@ return Sounds
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="69">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">UnitView</string>
               <string name="Source"><![CDATA[--[[
@@ -13443,15 +14473,17 @@ return UnitView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="71">
             <Properties>
               <string name="Name">WarView</string>
               <string name="Source"><![CDATA[--[[
 	WarView
-	"Travel" opens the strategic view: a top-down camera over the mainland or
-	any nation. From here you:
+	"Travel" opens the strategic view: a top-down camera over the central
+	battlefield (every nation's island rings it, joined by a bridge) or any
+	nation. From here you:
 	  * pick a weapon in the hotbar (1-7) and click to launch at the reticle
-	  * drag a box (or tap) to select your vehicles, right-click / tap to move
+	  * drag a box (or tap) to select your vehicles, right-click / tap to move;
+	    they drive over the bridges, and into a rival city with PvP on
 	  * watch strategic points ("AIRPORT · UNCAPTURED") and enemy nations
 	WASD / arrows pan, scroll / pinch zoom, the hammer button returns home.
 ]]
@@ -13689,7 +14721,7 @@ function WarView.refreshHint()
 		hint.Text = ("ARMED: %s  ·  LMB LAUNCH  ·  RMB CANCEL"):format(string.upper(w and w.name or selectedWeapon))
 		hint.TextColor3 = C.Accent
 	elseif UnitView.count() > 0 then
-		hint.Text = ("%d VEHICLES SELECTED  ·  RMB / TAP GROUND TO MOVE  ·  ESC CLEAR"):format(UnitView.count())
+		hint.Text = ("%d VEHICLES SELECTED  ·  RMB / TAP TO DRIVE THERE  ·  A RIVAL CITY TO INVADE (PVP)  ·  ESC CLEAR"):format(UnitView.count())
 		hint.TextColor3 = C.Teal
 	else
 		hint.Text = "WASD PAN  ·  SCROLL ZOOM  ·  1-7 WEAPONS  ·  DRAG TO SELECT VEHICLES"
@@ -13858,7 +14890,7 @@ local function describeTarget(hit: Vector3): string
 		end
 	end
 	for i = 1, Config.MaxPlots do
-		if Grid.insidePlot(Grid.plotOrigin(i), hit) then
+		if Grid.insidePlot(i, hit) then
 			for _, p in Players:GetPlayers() do
 				if p:GetAttribute("PlotIndex") == i then
 					return string.upper((p:GetAttribute("NationName") :: string?) or p.DisplayName) .. (p == player and "  ·  OWN TERRITORY" or "")
@@ -13890,7 +14922,8 @@ local function updateCamera(dt: number)
 	if move.Magnitude > 0 then
 		focus += move.Unit * height * 1.3 * dt
 	end
-	focus = Vector3.new(math.clamp(focus.X, -2600, 2600), 0, math.clamp(focus.Z, -800, 4600))
+	local o = Config.MainlandOrigin
+	focus = Vector3.new(math.clamp(focus.X, o.X - 2100, o.X + 2100), 0, math.clamp(focus.Z, o.Z - 2100, o.Z + 2100))
 	local target = CFrame.lookAt(focus + Vector3.new(0, height, height * 0.22), focus)
 	camera.CFrame = camera.CFrame:Lerp(target, math.min(1, dt * 10))
 
@@ -13912,7 +14945,7 @@ function WarView.go(target: string | number)
 	Hub.call("closeBuild")
 	if target == "mainland" then
 		focus = Config.MainlandOrigin
-		height = 900
+		height = 1500
 	elseif type(target) == "number" then
 		focus = Grid.plotOrigin(target)
 		height = 520
@@ -13924,7 +14957,7 @@ function WarView.go(target: string | number)
 		camera.CFrame = CFrame.lookAt(focus + Vector3.new(0, height, height * 0.22), focus)
 	end
 	if target == "mainland" then
-		readout.theater.Text = "MAINLAND"
+		readout.theater.Text = "CENTRAL FRONT"
 	elseif type(target) == "number" then
 		local name = "UNCLAIMED LAND"
 		for _, p in Players:GetPlayers() do
@@ -14009,11 +15042,11 @@ function WarView.openTravel()
 	end
 	local deployed = 0
 	for _, m in UnitView.mine() do
-		if m:GetAttribute("Location") == "mainland" then
+		if (m:GetAttribute("Location") or "home") ~= "home" then
 			deployed += 1
 		end
 	end
-	local war = theater("Mainland", 1, 170, "Mainland", "Contested continent. Capture airports, oil fields and ports for permanent bonuses.", C.Bad, function()
+	local war = theater("Mainland", 1, 170, "Central front", "The battlefield every nation's bridge leads to. Capture points for permanent bonuses.", C.Bad, function()
 		WarView.go("mainland")
 	end)
 	Lib.hazard({ AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 3, 1, 0), Size = UDim2.new(1, -3, 0, 5), Parent = war }, C.Bad, C.Raised, 9)
@@ -14081,7 +15114,7 @@ function WarView.openTravel()
 	if count == 0 then
 		Lib.text({
 			Name = "Empty",
-			Text = "No other nations on this server yet. The mainland is still yours to take.",
+			Text = "No other nations on this server yet. The central front is still yours to take.",
 			TextWrapped = true,
 			TextColor3 = C.Muted,
 			Size = UDim2.new(1, -8, 0, 40),
@@ -14206,7 +15239,7 @@ local function onInputChanged(input: InputObject)
 			selectBox.Size = UDim2.fromOffset(size.X, size.Y)
 		end
 	elseif input.UserInputType == Enum.UserInputType.MouseWheel and ClientState.mode == "war" then
-		height = math.clamp(height * (1 - input.Position.Z * 0.12), 120, 1800)
+		height = math.clamp(height * (1 - input.Position.Z * 0.12), 120, 2800)
 	end
 end
 
@@ -14275,7 +15308,7 @@ function WarView.init(screen: GuiObject)
 		Parent = warOverlay,
 	}, { Lib.pad(10, 14) })
 	Lib.caption("Theater", { TextColor3 = C.Accent, Parent = panel })
-	readout.theater = Lib.display({ Name = "Name", Text = "MAINLAND", TextSize = 20, Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 24), Parent = panel })
+	readout.theater = Lib.display({ Name = "Name", Text = "CENTRAL FRONT", TextSize = 20, Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 24), Parent = panel })
 	readout.grid = Lib.text({ Name = "Grid", Text = "", FontFace = Theme.Font.Mono, TextSize = 12, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 44), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
 	readout.sel = Lib.display({ Name = "Selected", Text = "0 SELECTED", TextSize = 12, TextColor3 = C.Teal, Position = UDim2.fromOffset(0, 64), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
 
@@ -14362,7 +15395,7 @@ function WarView.init(screen: GuiObject)
 	UserInputService.InputEnded:Connect(onInputEnded)
 	UserInputService.TouchPinch:Connect(function(_positions, scale, _velocity, state)
 		if ClientState.mode == "war" and state == Enum.UserInputState.Change then
-			height = math.clamp(height / math.max(0.5, scale ^ 0.05), 120, 1800)
+			height = math.clamp(height / math.max(0.5, scale ^ 0.05), 120, 2800)
 		end
 	end)
 	UserInputService.TouchPan:Connect(function(_positions, _translation, velocity, state)
@@ -14419,7 +15452,7 @@ return WarView
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="71">
+        <Item class="ModuleScript" referent="72">
           <Properties>
             <string name="Name">Hub</string>
             <string name="Source"><![CDATA[--[[
@@ -14444,7 +15477,7 @@ return Hub
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="72">
+        <Item class="LocalScript" referent="73">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -14564,11 +15597,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="73">
+        <Item class="Folder" referent="74">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="74">
+          <Item class="ModuleScript" referent="75">
             <Properties>
               <string name="Name">Icons</string>
               <string name="Source"><![CDATA[--[[
@@ -14880,7 +15913,7 @@ return Icons
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="76">
             <Properties>
               <string name="Name">Lib</string>
               <string name="Source"><![CDATA[--[[
@@ -15401,7 +16434,7 @@ return Lib
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="77">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -15536,7 +16569,7 @@ return Theme
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="77">
+  <Item class="Workspace" referent="78">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">196.2</float>

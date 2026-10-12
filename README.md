@@ -1,9 +1,13 @@
 # Forge & Frontline
 
-A Roblox nation-builder / war game inspired by *Build and Conquer*, with its own identity. Found a nation with your own name and flag, build a city, run an economy, refine oil into fuel, research weapons, mass-produce missiles, drones and armour, then cross to the mainland to capture strategic points, strike rivals and climb from **Outpost** to **Superpower**.
+A Roblox nation-builder / war game inspired by *Build and Conquer*, with its own identity. Found a nation with your own name and flag, build a city however you like, run an economy, refine oil into fuel, research weapons, mass-produce missiles, drones and armour, then drive over your bridge to the central front to capture strategic points, invade rivals, strike their cities and climb from **Outpost** to **Superpower**.
+
+![World layout](docs/world_layout.png)
+
+**The map:** a round central battlefield with seven strategic points sits in the middle. Up to eight nation islands ring it, each facing the centre, and each is joined to the battlefield by its own bridge with a border gate and a staging pad. Vehicles physically drive out over that bridge. Missiles launch from your launchers and arc across the battlefield to their target.
 
 - **Field Command UI:** a dark tactical-glass interface with amber signal accents, a stencil display font, corner brackets and hazard stripes. It is drawn entirely in code (no image IDs), with a command dock, a radar minimap and a war-room theater view.
-- **Blender model kit:** 89 hand-built stylized low-poly models (55 buildings, 11 vehicles, 7 munitions, 6 mainland sites, a fuel truck and props) with baked palette UVs. They are exported as FBX for Studio's 3D Importer, and the game picks them up automatically.
+- **Blender model kit:** 89 hand-built stylized low-poly models (55 buildings, 11 vehicles, 7 munitions, 6 battlefield sites, a fuel truck and props) with baked palette UVs. They are exported as FBX for Studio's 3D Importer, and the game picks them up automatically.
 - **Always playable:** until the kit is imported, every model falls back to a clean procedural part-built version, so the place works the moment you open it.
 
 ## Quick start
@@ -40,8 +44,10 @@ rojo build -o build/ForgeAndFrontline.rbxlx   # or rebuild the place file
 |---|---|
 | **Found a nation** | First join opens the founding screen. Pick a name (text-filtered, 3–20 characters) and design a flag from 6 patterns, 12 colours and 5 emblems, with a live preview on a pole. The flag flies over your island, sits on your border sign, tags you on the war map and shows in the HUD. Click the flag to change it any time. |
 | **Ranks** | Power = population + building value + tech + vehicles + captured points. Six ranks, from Outpost to Township, City-State, Republic, Federation and Superpower, each pay a one-time treasury bonus with a RANK UP banner. Power is on the leaderboard. |
-| **Command dock** | Build `B`, Army `G`, Research `T`, War Map `M`, Rewards `J`, Store, with live badges. The radar minimap (bottom-right) shows your buildings and vehicles at home, and point ownership on the mainland. |
-| **Build menu** (`B`) | A department column (Civilian / Military), tabs, and cards with 3D model thumbnails, price and build-time chips and locked badges. Also a Standard / Eastern / European faction toggle, a spinning preview with stats, and DEMOLISH `2`, UNDO `3`, DRAG `4`, MOVE `5`, ROTATE `6`/`R` tools. |
+| **Command dock** | Build `B`, Army `G`, Research `T`, War Map `M`, Rewards `J`, Store, with live badges. The radar minimap (bottom-right) shows your island (front edge up) at home, and the whole map in war view: the battlefield, every island and bridge, point owners and vehicles. |
+| **Free-form building** (`B`) | No grid blocks or zones: put roads, housing, industry, services and military anywhere on your 480-stud island, **at any angle**. `R` turns 15° (`Shift+R` back). `G` switches FREE / GRID (4-stud grid, quarter turns). In FREE mode, buildings near a road turn to face it and sit flush with the kerb (hold `Alt` to place freely). Overlap is checked on the real rotated footprints, on the client ghost and again on the server. |
+| **Roads** | Drawn point to point at any length (up to 240 studs per piece) and in any direction: click a start, then click or drag to lay each piece. The road keeps going from the last point until you click the same spot twice, right-click or press `Q`. Ends snap onto other roads' ends and centrelines, and `Shift` snaps the angle to 15°. Roads can cross to make junctions, and the price scales with length ($40 per 8 studs). |
+| **Build menu** | A department column (Civilian / Military), tabs, and cards with 3D model thumbnails, price and build-time chips and locked badges. Also a Standard / Eastern / European faction toggle, a spinning preview with stats, and DEMOLISH `2`, UNDO `3`, DRAG `4` (lay a row), MOVE `5`, ROTATE `6`/`R` and SNAP `G` tools. A tooltip shows the angle, road length and live cost. |
 | **Day & night** | A 16-minute cycle with short nights. Windows across every city light up after dusk (a few stay dark), kit lamps and beacons glow, and the scene shifts to a cool night grade. The sea is real terrain water. |
 | **Economy** | Pay day every 60 s. Taxes scale with population and happiness; shops, offices and factories add income; buildings cost upkeep. |
 | **Utilities** | Workers, power (MW) and water are pooled per nation. Shortages slow every building that needs them. Buildings without road access run at half speed. |
@@ -49,9 +55,10 @@ rojo build -o build/ForgeAndFrontline.rbxlx   # or rebuild the place file
 | **Oil → fuel → war** | Oil pumps fill national storage. Refineries refine fuel, and **fuel trucks visibly drive** it to military factories. The destination is either Auto (most free space) or one you pick, as in the refinery panel. |
 | **Production** | Military factories build missiles, drones and vehicles from a queue. Each item costs cash up front, steel when it starts, and burns fuel while it builds. |
 | **Research** | Labs generate RP. The Civil and Military trees unlock buildings and weapons. The missile ladder (SRBM → GLCM → MRBM → Cluster → Hypersonic) also needs confirmed **hits**. |
-| **War map** (`M`) | The theater select lists the mainland (points held, vehicles deployed) and every rival nation with its flag, rank, power and PvP state. The strategic camera adds a vignette, a theater readout (grid and altitude), a weapon hotbar (stock, reload and ammo bars), and a reticle that names what's under it before you launch. |
+| **War map** (`M`) | The theater select lists the central front (points held, vehicles deployed) and every rival nation with its flag, rank, power and PvP state. The strategic camera adds a vignette, a theater readout (grid and altitude), a weapon hotbar (stock, reload and ammo bars), and a reticle that names what's under it before you launch. |
 | **Air defense** | CIWS, SAM and long-range SAM intercept incoming strikes in range (radar adds 25%). Interceptors visibly meet missiles mid-air. |
-| **Units** | Marder, Leopard, HIMARS, Gepard and more, plus faction variants. Units deploy through the tunnel to the mainland. Drag-box select, right-click to move. They fight automatically and wear down garrisons. |
+| **Units** | Marder, Leopard, HIMARS, Gepard and more, plus faction variants. Vehicles really drive: out of your city, across your bridge, over the battlefield and, with PvP on, across a rival's bridge into their city. Drag-box select, then right-click anywhere to drive there. DEPLOY ALL rolls everything out to your staging pad. They fight any enemy vehicle in the same theatre and wear down garrisons. |
+| **Invasions** | With both nations' PvP on (and no new-nation shield), send vehicles into a rival city. They shoot its defenders and knock out buildings for war spoils. The defender's own vehicles fight back, and the defender is warned that their city is under attack. Ordering an invasion locks your PvP ON like a strike does. |
 | **Conquest** | Seven strategic points: Capital, Airport, Oil Field, Nuclear Plant, City, Port, Military Base. Knock the garrison to 0, hold the ring, and capture it for cash, oil, power, steel or RP bonuses. |
 | **PvP** | Opt-in toggle, with a 20-minute shield for new nations. Attacking locks you PvP ON for 3 minutes. Hits knock buildings out (they are repaired, never deleted) and pay you war spoils. |
 
@@ -85,9 +92,11 @@ src/shared/            ReplicatedStorage.Shared
   Config.luau          every global balance number
   Catalog/             Buildings, Weapons, Units, Research, Products, Quests, WarMap
   AssetLibrary.luau    loads + normalises the imported Blender kit (ReplicatedStorage.Assets)
-  ModelBuilder.luau    kit-first models with procedural low-poly fallbacks
+  ModelBuilder.luau    kit-first models with procedural low-poly fallbacks, road segments
   Net.luau             declared remotes + rate-limited server handlers
-  Util/                Grid, Format, Ballistics (synced flight paths), Unlocks, Flag, Rank
+  Util/                Grid (world layout: ring of islands, bridges, zones), Footprint
+                       (rotated-rectangle overlap + spatial hash), Format, Ballistics,
+                       Unlocks, Flag, Rank
 src/server/            ServerScriptService.Server
   Main.server.luau     bootstrap, player lifecycle
   Services/            Data (session-locked DataStore), Plot, Build, Economy, Logistics,
@@ -119,7 +128,7 @@ python blender/build_kit.py --out assets --no-render --only small_house,radar_st
 ```
 Every model uses one 256×256 palette texture (`assets/palette.png`), so the whole kit is a single material. Meshes are split under Roblox's triangle limit. `assets/previews/_sheet_*.png` are contact sheets of the whole kit.
 
-All gameplay is **server-authoritative**. The client only sends requests, and every one is validated for grid space, cash, research, passes, limits and rate. Adding content is data-only: add an entry to a catalog, and pick an existing `model` style or add one to `ModelBuilder`.
+All gameplay is **server-authoritative**. The client only sends requests, and every one is validated for footprint overlap, land, cash, research, passes, limits and rate. Buildings are saved as island-local studs plus a yaw. Saves from the old grid version are converted automatically on load. Adding content is data-only: add an entry to a catalog, and pick an existing `model` style or add one to `ModelBuilder`.
 
 ## Tests
 
@@ -127,8 +136,8 @@ All gameplay is **server-authoritative**. The client only sends requests, and ev
 ./tests/run.sh
 ```
 Builds the place, then runs three Lune suites:
-- **shared_smoke:** catalog cross-references, grid math, formatting, every procedural model, flags and ranks, and the Blender-kit loader (fake imported meshes get indexed, fitted to the footprint, turned to face forward, rigged and lit).
-- **server_sim:** the real server with mocked Roblox services. Two players join, build, grow, research, refine, produce, strike, fight PvP, capture, buy, claim rewards, found nations (name validation, flag sanitising, sign + flagpole), rank up, then leave and rejoin with everything restored.
-- **client_sim:** the real client UI driven against that simulated server. It founds a nation through the flag designer, opens every window, panel, tab, tool and the war view, launches a missile, and runs a night/day light cycle.
+- **shared_smoke:** catalog cross-references, the world layout (islands face the centre, nothing overlaps, zones and bridges), footprint geometry, formatting, every procedural model and road segment, flags and ranks, and the Blender-kit loader (fake imported meshes get indexed, fitted to the footprint, turned to face forward, rigged and lit).
+- **server_sim:** the real server with mocked Roblox services. Two players join, draw roads, build at any angle, grow, research, refine, produce, strike and fight PvP. Their vehicles route over the bridges, capture a point and invade a city. They also buy, claim rewards, found nations (name validation, flag sanitising, sign + flagpole) and rank up. They leave and rejoin with everything restored, and an old grid-format save is migrated.
+- **client_sim:** the real client UI driven against that simulated server. It founds a nation through the flag designer, checks the placement tools (overlap, road alignment, drawing a diagonal road, grid snap, rows), opens every window, panel, tab, tool and the war view, launches a missile, and runs a night/day light cycle.
 
 `luau-lsp analyze` (Roblox definitions) also runs clean over `src/`.

@@ -349,11 +349,13 @@ nA.passes.Billboard = true
 for _, id in { "military_doctrine", "heavy_industry", "ballistics", "mechanized", "urban_planning", "drones_1", "air_defense_1", "air_defense_2" } do
 	nA.data.Researched[id] = true
 end
--- a small city to inspect
-call("PlaceMany", A, "road", { {10, 10}, {12, 10}, {14, 10}, {16, 10}, {18, 10}, {20, 10}, {22, 10} }, 0)
+-- a small city to inspect (island-local studs, free-form)
+local roadRes = call("PlaceRoad", A, "road", -220, -180, -40, -180)
+check(roadRes.ok, "road drawn " .. tostring(roadRes.err))
 local placed = {}
-for _, spec in { {"small_house", 10, 12}, {"wind_turbine", 30, 30}, {"water_tower", 34, 30}, {"oil_pump", 14, 6}, {"small_refinery", 16, 12},
-	{"small_military_factory", 30, 12}, {"srbm_launcher", 60, 60}, {"billboard", 70, 70}, {"apartment", 22, 12}, {"ciws", 80, 80}, {"radar_station", 84, 84}, {"hornet_launcher", 88, 88} } do
+for _, spec in { {"small_house", -200, -172}, {"wind_turbine", -100, -120}, {"water_tower", -88, -120}, {"oil_pump", -180, -190},
+	{"small_refinery", -150, -160}, {"small_military_factory", -100, -158}, {"srbm_launcher", 40, 40}, {"billboard", 70, 70},
+	{"apartment", -60, -160}, {"ciws", 100, 100}, {"radar_station", 130, 130}, {"hornet_launcher", 170, 170} } do
 	local r = call("PlaceBuilding", A, spec[1], spec[2], spec[3], 0)
 	if not r.ok then print("    place " .. spec[1] .. " failed: " .. tostring(r.err)) end
 	placed[spec[1]] = r.uid
@@ -500,6 +502,34 @@ click("MOVE")
 click("UNDO")
 frame()
 click("Close")
+
+print("== free placement tools")
+local Placement = req("Controllers.Placement")
+guarded("rebuild occupancy", Placement._rebuild)
+local houseDef = { id = "small_house", size = { 2, 2 } }
+check(not Placement._canPlace(houseDef, -150, -180, 0), "client: can't place on a road")
+check(Placement._canPlace(houseDef, 0, -40, 33), "client: free spot at any angle")
+check(not Placement._canPlace(houseDef, -150, -165, 33), "client: overlap with refinery")
+local ax, az, ayaw = Placement._solve(houseDef, -150, -165)
+check(ayaw == 0 and math.abs(az + 171.6) < 0.06 and math.abs(ax + 150) < 0.06, ("aligns to road north side (%.2f, %.2f, %d)"):format(ax, az, ayaw))
+local bx, bz, byaw = Placement._solve(houseDef, -150, -195)
+check(byaw == 180 and math.abs(bz + 188.4) < 0.06, ("aligns to road south side (%.2f, %.2f, %d)"):format(bx, bz, byaw))
+local roadsBefore = 0
+for _, b in nA.buildings do if b.id == "road" then roadsBefore += 1 end end
+local drew = false
+guarded("draw road", function()
+	drew = Placement.drawRoad({ id = "road" }, roblox.Vector2.new(-40, -180), roblox.Vector2.new(20, -120))
+end)
+local roadsAfter = 0
+for _, b in nA.buildings do if b.id == "road" then roadsAfter += 1 end end
+check(drew and roadsAfter == roadsBefore + 1, "client draws a diagonal road")
+guarded("toggle snap", Placement.toggleSnap)
+check(Placement.state().snap == "grid", "grid snap on")
+guarded("rotate grid", Placement.rotate)
+check(Placement.state().rotation % 90 == 0, "grid rotation is quarter turns")
+guarded("toggle snap back", Placement.toggleSnap)
+local rows = Placement.rowSpots(houseDef, roblox.Vector2.new(0, 0), roblox.Vector2.new(40, 0), 0)
+check(#rows == 6 and rows[6][1] == 40, "row spots every footprint")
 
 print("== building panels")
 for id, uid in placed do

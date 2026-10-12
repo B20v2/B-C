@@ -83,7 +83,7 @@ function NationService.compute(n: Nation): Rank.Info
 	local value = 0
 	for _, b in n.buildings do
 		if not b.finishAt then
-			value += b.def.cost
+			value += b.cost
 		end
 	end
 	local techs = 0

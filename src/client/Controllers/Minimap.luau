@@ -1,8 +1,10 @@
 --[[
 	Minimap
 	Radar scope in the bottom-right corner with a rotating sweep.
-	  home:  your buildings (coloured by category), vehicles and you
-	  war:   the mainland's strategic points (coloured by owner) and units
+	  home:  your island (front edge up): buildings coloured by category,
+	         vehicles and you
+	  war:   the whole map: the central battlefield, every island and
+	         bridge, strategic points (coloured by owner) and vehicles
 ]]
 
 local Players = game:GetService("Players")
@@ -60,17 +62,34 @@ local function dot(pos: Vector2, size: number, color: Color3, round: boolean?)
 	d.Position = UDim2.fromOffset(SIZE / 2 + pos.X, SIZE / 2 + pos.Y)
 	d.Size = UDim2.fromOffset(size, size)
 	d.BackgroundColor3 = color
+	d.BackgroundTransparency = 0
 	d.Rotation = 0
 	;(d:FindFirstChild("Round") :: UICorner).CornerRadius = UDim.new(round and 1 or 0, 0)
 	return d
 end
 
-local function project(world: Vector3, center: Vector3, scale: number): Vector2?
-	local v = Vector2.new(world.X - center.X, world.Z - center.Z) * scale
+-- frame: draw in that frame's local axes (local -Z up the screen).
+local function project(world: Vector3, center: Vector3, scale: number, frame: CFrame?): Vector2?
+	local v
+	if frame then
+		local l = frame:PointToObjectSpace(world)
+		v = Vector2.new(l.X, l.Z) * scale
+	else
+		v = Vector2.new(world.X - center.X, world.Z - center.Z) * scale
+	end
 	if v.Magnitude > R - 2 then
 		return nil
 	end
 	return v
+end
+
+local function ownerOfPlot(index: number): Player?
+	for _, p in Players:GetPlayers() do
+		if p:GetAttribute("PlotIndex") == index then
+			return p
+		end
+	end
+	return nil
 end
 
 local function redraw()
@@ -78,10 +97,32 @@ local function redraw()
 	local mode = ClientState.mode
 	local war = mode == "war"
 	local center, scale
+	local frame: CFrame? = nil
 	if war then
 		center = Config.MainlandOrigin
-		scale = R / (Config.MainlandSize / 2 + 60)
-		label.Text = "THEATER // MAINLAND"
+		scale = R / (Config.PlotRingRadius + Grid.PlotSize * 0.72)
+		label.Text = "THEATER // ALL FRONTS"
+		-- battlefield, bridges and islands
+		local land = dot(Vector2.zero, Config.MainlandRadius * 2 * scale, Color3.fromRGB(60, 84, 50), true)
+		land.BackgroundTransparency = 0.35
+		for i = 1, Config.MaxPlots do
+			local owner = ownerOfPlot(i)
+			local col = owner == player and C.Accent
+				or (owner and ((owner:GetAttribute("Pvp") == true) and C.Bad or C.Muted) or C.Faint)
+			local v = project(Grid.plotOrigin(i), center, scale)
+			if v then
+				local isl = dot(v, Grid.PlotSize * scale, col)
+				isl.Rotation = -math.deg(Grid.plotAngle(i))
+				isl.BackgroundTransparency = owner and 0.25 or 0.7
+			end
+			local mid = (Grid.shore(i) + Grid.gate(i)) / 2
+			local bv = project(mid, center, scale)
+			if bv then
+				local bridge = dot(bv, 2, C.TextSoft)
+				bridge.Size = UDim2.fromOffset(2, math.max(2, (Grid.gate(i) - Grid.shore(i)).Magnitude * scale))
+				bridge.Rotation = -math.deg(Grid.plotAngle(i))
+			end
+		end
 		local points = workspace:FindFirstChild("Mainland") and workspace.Mainland:FindFirstChild("Points")
 		if points then
 			for _, p in points:GetChildren() do
@@ -91,7 +132,7 @@ local function redraw()
 					if v then
 						local owner = (p:GetAttribute("Owner") :: number?) or 0
 						local col = owner == 0 and C.Muted or (owner == player.UserId and C.Good or ((p:GetAttribute("Color") :: Color3?) or C.Bad))
-						dot(v, 9, col).Rotation = 45
+						dot(v, 7, col).Rotation = 45
 					end
 				end
 			end
@@ -102,8 +143,11 @@ local function redraw()
 			return
 		end
 		center = Grid.plotOrigin(idx)
-		scale = R / (Grid.PlotSize / 2 + 30)
+		frame = Grid.plotCFrame(idx)
+		scale = R / (Grid.PlotSize / 2 * 1.42 + 20)
 		label.Text = "SECTOR // HOME"
+		local isl = dot(Vector2.zero, Grid.PlotSize * scale, Color3.fromRGB(46, 70, 42))
+		isl.BackgroundTransparency = 0.4
 		local homeland = workspace:FindFirstChild("Homeland")
 		local plot = homeland and homeland:FindFirstChild("Plot_" .. idx)
 		local folder = plot and plot:FindFirstChild("Buildings")
@@ -113,16 +157,20 @@ local function redraw()
 					local def = Buildings.get(b:GetAttribute("BuildingId") :: string)
 					local base = b.PrimaryPart
 					if def and base then
-						local v = project(base.CFrame.Position, center, scale)
+						local v = project(base.CFrame.Position, center, scale, frame)
 						if v then
-							local s = math.clamp(math.max(def.size[1], def.size[2]) * Grid.CellSize * scale, 2, 14)
 							local col = TAB_COLORS[def.tab] or C.TextSoft
 							if b:GetAttribute("Damaged") then
 								col = C.Bad
 							elseif b:GetAttribute("FinishAt") then
 								col = col:Lerp(C.Panel, 0.5)
 							end
-							dot(v, s, col)
+							local len = b:GetAttribute("Len") :: number?
+							local w = math.max(def.size[1] * Grid.CellSize * scale, 1.5)
+							local d = math.max((len or def.size[2] * Grid.CellSize) * scale, 1.5)
+							local f = dot(v, w, col)
+							f.Size = UDim2.fromOffset(w, d)
+							f.Rotation = -((b:GetAttribute("Angle") :: number?) or 0)
 						end
 					end
 				end
@@ -134,7 +182,7 @@ local function redraw()
 		for _, u in units:GetChildren() do
 			local root = u:IsA("Model") and u.PrimaryPart
 			if root then
-				local v = project(root.CFrame.Position, center, scale)
+				local v = project(root.CFrame.Position, center, scale, frame)
 				if v then
 					local mine = u:GetAttribute("OwnerId") == player.UserId
 					dot(v, 5, mine and C.Teal or C.Bad, true)
@@ -145,10 +193,10 @@ local function redraw()
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if hrp and not war then
-		local v = project(hrp.CFrame.Position, center, scale)
+		local v = project(hrp.CFrame.Position, center, scale, frame)
 		if v then
 			local d = dot(v, 8, C.Accent)
-			local look = hrp.CFrame.LookVector
+			local look = frame and frame:VectorToObjectSpace(hrp.CFrame.LookVector) or hrp.CFrame.LookVector
 			d.Rotation = math.deg(math.atan2(look.X, -look.Z)) + 45
 		end
 	end

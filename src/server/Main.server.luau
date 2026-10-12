@@ -108,6 +108,7 @@ local function onLoaded(player: Player, data: { [string]: any })
 		data = data,
 		plotIndex = plot.index,
 		origin = plot.origin,
+		frame = plot.frame,
 		folder = plot.buildings,
 		buildings = {},
 		grid = {},

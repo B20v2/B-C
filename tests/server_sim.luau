@@ -267,28 +267,40 @@ check(nA.plotIndex ~= nB.plotIndex, "different plots")
 check(sent.State and #sent.State > 0, "state pushed to client")
 check(A:FindFirstChild("leaderstats") ~= nil, "leaderstats")
 
-print("== early economy")
-local function place_(p, id, x, z, r)
-	local res = call("PlaceBuilding", p, id, x, z, r or 0)
+print("== early economy (free-form building)")
+-- positions are island-local studs (footprint centre) + yaw in degrees
+local function place_(p, id, x, z, a)
+	local res = call("PlaceBuilding", p, id, x, z, a or 0)
 	if not res.ok then print("    place " .. id .. " failed: " .. tostring(res.err)) end
 	return res
 end
-local res = call("PlaceMany", A, "road", { {10, 10}, {12, 10}, {14, 10}, {16, 10}, {18, 10}, {20, 10} }, 0)
-check(res.ok and res.placed == 6, "drag-place 6 roads")
-check(place_(A, "small_house", 10, 12).ok, "house 1")
-check(place_(A, "small_house", 12, 12).ok, "house 2")
-check(place_(A, "small_house", 14, 12).ok, "house 3")
-check(not place_(A, "small_house", 14, 12).ok, "overlap rejected")
-check(not place_(A, "small_house", 99, 99).ok, "out of bounds rejected")
-check(not place_(A, "apartment", 30, 30).ok, "locked research rejected")
-check(place_(A, "wind_turbine", 30, 30).ok, "turbine")
-check(place_(A, "water_tower", 34, 30).ok, "water tower")
+local res = call("PlaceRoad", A, "road", -200, -160, -152, -160)
+check(res.ok and res.cost == 240, "draw a 48-stud road (6 tiles) " .. tostring(res.err) .. " " .. tostring(res.cost))
+check(nA.buildings[res.uid].len == 48 and nA.buildings[res.uid].r == 90, "road segment length + heading")
+check(not call("PlaceRoad", A, "road", 0, 0, 0, 400).ok, "over-long road rejected")
+local junction = call("PlaceRoad", A, "road", -176, -160, -176, -200)
+check(junction.ok, "roads may cross / join other roads")
+check(place_(A, "small_house", -196, -152).ok, "house 1")
+check(place_(A, "small_house", -188, -152).ok, "house 2")
+check(place_(A, "small_house", -160, -152).ok, "house 3")
+check(not place_(A, "small_house", -160, -152).ok, "overlap rejected")
+check(call("PlaceBuilding", A, "small_house", -164, -160, 0).err == "Can't build on a road", "can't build on a road")
+check(not place_(A, "small_house", 238, 238).ok, "out of bounds rejected")
+check(call("PlaceBuilding", A, "small_house", -146, -160, 0).err == "Can't build on a road", "road end caps block buildings")
+local rot = place_(A, "small_house", -120, -152, 37)
+check(rot.ok and nA.buildings[rot.uid].r == 37, "any angle")
+check(not place_(A, "apartment", 60, 60).ok, "locked research rejected")
+check(place_(A, "wind_turbine", -100, -120).ok, "turbine")
+check(place_(A, "water_tower", -88, -120).ok, "water tower")
 local cash0 = nA.data.Cash
 advance(12)
 check(nA.data.Population > 0, ("population grows (%.1f)"):format(nA.data.Population))
 local houses = 0
 for _, b in nA.buildings do if b.id == "small_house" and not b.finishAt then houses += 1 end end
-check(houses == 3, "houses finished construction")
+check(houses == 4, "houses finished construction")
+local connected = 0
+for _, b in nA.buildings do if b.id == "small_house" and b.connected then connected += 1 end end
+check(connected >= 3, ("houses beside the road are connected (%d)"):format(connected))
 advance(60)
 check(nA.data.Cash ~= cash0, ("pay day changed cash (%d -> %d)"):format(cash0, nA.data.Cash))
 check(sent.Notify and #sent.Notify > 0, "notifications sent")
@@ -303,10 +315,13 @@ local cBefore = nA.data.Cash
 check(call("Undo", A).ok, "undo place")
 check(nA.data.Cash == cBefore + 2000, "undo refunded")
 local r2 = place_(A, "shop", 40, 40)
-check(call("MoveBuilding", A, r2.uid, 44, 44, 1).ok, "move shop")
-check(nA.buildings[r2.uid].x == 44 and nA.buildings[r2.uid].r == 1, "moved coords")
+check(call("MoveBuilding", A, r2.uid, 80, 80, 45).ok, "move shop")
+check(nA.buildings[r2.uid].x == 80 and nA.buildings[r2.uid].r == 45, "moved coords")
+check(nA.buildings[r2.uid].model:GetAttribute("Angle") == 45, "model carries placement attrs")
 check(call("DeleteBuilding", A, r2.uid).ok, "delete shop")
 check(nA.buildings[r2.uid] == nil, "shop gone")
+local rowRes = call("PlaceMany", A, "small_house", { { 120, -200 }, { 128, -200 }, { 136, -200 } }, 0)
+check(rowRes.ok and rowRes.placed == 3, "row of houses")
 
 print("== research + industry")
 nA.data.Cash = 50000000
@@ -324,17 +339,17 @@ check(research(A, "mechanized"), "research mechanized")
 check(not call("StartResearch", A, "cruise_missiles").ok, "cruise missiles gated by hits")
 
 -- power + water + roads for industry
-call("PlaceMany", A, "road", { {50, 50}, {52, 50}, {54, 50}, {56, 50}, {58, 50}, {60, 50}, {62, 50}, {64, 50}, {66, 50}, {68, 50}, {70, 50}, {72, 50} }, 0)
-for i = 0, 9 do place_(A, "wind_turbine", 50 + i * 2, 60) end
-for i = 0, 5 do place_(A, "apartment", 50 + i * 6, 70) end -- needs urban planning -> fails, fine
-for i = 0, 7 do place_(A, "small_house", 50 + i * 2, 52) end
-check(place_(A, "oil_pump", 50, 47).ok, "oil pump")
-check(place_(A, "oil_pump", 52, 47).ok, "oil pump 2")
-local ref = place_(A, "small_refinery", 56, 44)
+check(call("PlaceRoad", A, "road", -220, 100, 20, 100).ok, "240-stud road")
+for i = 0, 9 do place_(A, "wind_turbine", -210 + i * 10, 108) end
+for i = 0, 5 do place_(A, "apartment", -210 + i * 26, 140) end -- needs urban planning -> fails, fine
+for i = 0, 7 do place_(A, "small_house", -210 + i * 10, 120) end
+check(place_(A, "oil_pump", -210, 90).ok, "oil pump")
+check(place_(A, "oil_pump", -198, 90).ok, "oil pump 2")
+local ref = place_(A, "small_refinery", -170, 80)
 check(ref.ok, "refinery")
-local fac = place_(A, "small_military_factory", 64, 42)
+local fac = place_(A, "small_military_factory", -130, 76)
 check(fac.ok, "military factory")
-local lau = place_(A, "srbm_launcher", 80, 80)
+local lau = place_(A, "srbm_launcher", 100, 100)
 check(lau.ok, "srbm launcher")
 advance(60)
 local refB = nA.buildings[ref.uid]
@@ -373,7 +388,7 @@ advance(25)
 local blocked = call("LaunchWeapon", A, "SRBM", nB.origin)
 check(not blocked.ok and blocked.err:find("shield") ~= nil, "new nation shield blocks: " .. tostring(blocked.err))
 nB.shieldUntil = 0
-local hb = place_(B, "small_house", 49, 49)
+local hb = place_(B, "small_house", 0, 0)
 advance(10)
 local hbB = nB.buildings[hb.uid]
 local center = S.BuildService.worldCFrame(nB, hbB).Position
@@ -387,22 +402,58 @@ if hbB.damaged then
 	check(call("RepairBuilding", B, hb.uid).ok, "repair")
 end
 
-print("== units + capture")
+print("== units: drive over the bridges, capture, raid")
+local Grid = load(ReplicatedStorage.Shared.Util.Grid)
 check(S.UnitService.count(nA) >= 1, ("units: %d"):format(S.UnitService.count(nA)))
 local u
 for _, unit in nA.units do u = unit end
 if u then
+	check(u.location == "home", "unit starts at home")
 	local cr = call("CommandUnits", A, { u.uid }, target)
 	check(cr.ok, "command unit to airport")
-	check(u.location == "mainland", "unit deployed")
+	-- the route leaves through this nation's gate and bridge
+	local function passes(path, p)
+		for _, w in path do
+			if (Vector3.new(w.X, 0, w.Z) - Vector3.new(p.X, 0, p.Z)).Magnitude < 1 then return true end
+		end
+		return false
+	end
+	local remaining = table.clone(u.path)
+	table.insert(remaining, 1, u.align.Position)
+	check(passes(remaining, Grid.gate(nA.plotIndex)) and passes(remaining, Grid.shore(nA.plotIndex)), "routed over own bridge")
+	check(not call("CommandUnits", A, { u.uid }, Config.MainlandOrigin + Vector3.new(2250, 0, 0)).ok, "can't drive into the sea")
 	-- physics isn't simulated: teleport onto the point
 	u.model:PivotTo(CFrame.new(target + Vector3.new(0, u.height, 0)))
+	u.path = {}
+	S.UnitService._moveStep()
+	check(u.location == "mainland", "unit on the battlefield")
 	pts[2].garrison = 0
 	advance(60)
 	check(pts[2].owner == nA.userId, ("airport captured (capture %.0f, owner %d)"):format(pts[2].capture, pts[2].owner))
 	local bonus = S.ConquestService.bonusFor(nA)
 	check(bonus.income > 0, "capture bonus applies")
+
+	-- raid Bravo's city
+	call("SetPvp", B, false)
+	local houseB = nB.buildings[hb.uid]
+	local nearHouse = S.BuildService.worldCFrame(nB, houseB).Position + Vector3.new(14, 0, 0)
+	local blockedRaid = call("CommandUnits", A, { u.uid }, nearHouse)
+	check(not blockedRaid.ok and (blockedRaid.err or ""):find("PvP OFF") ~= nil, "no raid on PvP OFF city: " .. tostring(blockedRaid.err))
+	call("SetPvp", B, true)
+	S.BuildService.setDamaged(nB, houseB, false)
+	local raid = call("CommandUnits", A, { u.uid }, nearHouse)
+	check(raid.ok, "raid order " .. tostring(raid.err))
+	local rp = table.clone(u.path)
+	table.insert(rp, 1, u.align.Position)
+	check(passes(rp, Grid.gate(nB.plotIndex)), "raid route crosses the enemy bridge")
+	u.model:PivotTo(CFrame.new(nearHouse + Vector3.new(0, u.height, 0)))
+	u.path = {}
+	S.UnitService._moveStep()
+	check(u.location == "raid", "unit in enemy city")
+	for _ = 1, 40 do S.UnitService._combatStep() end
+	check(houseB.damaged, ("raiders knock out buildings (hp %.0f)"):format(houseB.hp))
 	check(call("RecallUnits", A, nil).ok, "recall")
+	check(#u.path >= 3, "recall drives home over the bridges")
 end
 
 print("== monetization + rewards")
@@ -483,6 +534,26 @@ check(S.UnitService.count(nA2) == unitCount, "units restored")
 check(nA2.data.Inventory.SRBM == inv, "inventory restored")
 check(nA2.passes.DoubleCash == true, "studio pass restored")
 check(nA2.data.Nation and nA2.data.Nation.Name == "Iron Republic" and A2:GetAttribute("NationName") == "Iron Republic", "nation identity restored")
+
+print("== old grid saves migrate")
+stores[Config.DataStoreName].data["player_303"] = {
+	Version = 1, Cash = 1000, NextUid = 4,
+	Buildings = {
+		{ u = 1, id = "road", x = 50, z = 50 },
+		{ u = 2, id = "small_house", x = 50, z = 52 },
+		{ u = 3, id = "shop", x = 60, z = 60, r = 1 },
+	},
+}
+local Cc = newPlayer(303, "Charlie")
+stdtask.wait(0.1)
+local nC = Nations.get(Cc)
+check(nC and nC.ready, "old save loads")
+local road3, house3, shop3 = nC.buildings[1], nC.buildings[2], nC.buildings[3]
+check(road3 and road3.x == 4 and road3.z == 4 and road3.len == 8, "old road tile -> segment")
+check(house3 and house3.x == 4 and house3.z == 12 and house3.connected, "old house keeps its spot + road access")
+check(shop3 and shop3.x == 46 and shop3.z == 46 and shop3.r == 90, "old quarter turn -> degrees")
+S.BuildService.serialize(nC)
+check(nC.data.Buildings[1].a ~= nil, "saves in the new format")
 
 print(("\n%d failures, %d server warnings"):format(failures, errors))
 process.exit(failures == 0 and errors == 0 and 0 or 1)

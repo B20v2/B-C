@@ -149,29 +149,62 @@ check(Format.clock(83) == "01:23", "clock")
 check(Format.duration(48) == "48s" and Format.duration(130) == "2m 10s", "duration")
 check(Format.cash(-1500) == "-$1.5k", "neg cash " .. Format.cash(-1500))
 
--- Grid round trip for every rotation / size
-local origin = Grid.plotOrigin(3)
-for _, def in Buildings.all() do
-	for r = 0, 3 do
-		local fw, fd = Grid.footprint(def.size[1], def.size[2], r)
-		local cf = Grid.cframeFor(origin, 10, 20, def.size[1], def.size[2], r)
-		local x, z = Grid.worldToCell(origin, cf.Position, fw, fd)
-		check(x == 10 and z == 20, ("grid roundtrip %s r%d -> %s,%s"):format(def.id, r, tostring(x), tostring(z)))
-	end
-end
--- plots don't overlap
+-- World layout: islands on a ring around the central battlefield
+local V3 = roblox.Vector3
+local CFrame = roblox.CFrame
+local Vector2 = roblox.Vector2
 for i = 1, Config.MaxPlots do
-	for j = i + 1, Config.MaxPlots do
-		local d = Grid.plotOrigin(i) - Grid.plotOrigin(j)
-		check(math.max(math.abs(d.X), math.abs(d.Z)) >= Grid.PlotSize, "plots overlap " .. i .. "," .. j)
+	local o = Grid.plotOrigin(i)
+	-- the island's front edge (local -Z) faces the battlefield
+	local look = Grid.plotCFrame(i).LookVector
+	local toCenter = (Config.MainlandOrigin - o).Unit
+	check(look:Dot(toCenter) > 0.999, "island faces centre " .. i)
+	-- island + beach corners stay clear of the battlefield and of each other
+	local half = Grid.PlotSize / 2 + Grid.Rim
+	for _, c in { { -1, -1 }, { -1, 1 }, { 1, -1 }, { 1, 1 } } do
+		local corner = (Grid.plotCFrame(i) * CFrame.new(c[1] * half, 0, c[2] * half)).Position
+		check(not Grid.inMainland(corner, 15), "island overlaps battlefield " .. i)
+		for j = 1, Config.MaxPlots do
+			if j ~= i then
+				check(not Grid.insidePlot(j, corner, Grid.Rim + 10), ("islands %d/%d overlap"):format(i, j))
+			end
+		end
 	end
+	-- local <-> world round trip
+	local cf = Grid.toWorld(i, 37.5, -120, 30)
+	local l = Grid.toLocal(i, cf.Position)
+	check(math.abs(l.X - 37.5) < 1e-3 and math.abs(l.Z + 120) < 1e-3, "toLocal round trip " .. i)
+	-- zones
+	local z1, i1 = Grid.zoneAt(o)
+	check(z1 == "plot" and i1 == i, "zone plot " .. i)
+	local z2, i2 = Grid.zoneAt((Grid.shore(i) + Grid.gate(i)) / 2)
+	check(z2 == "bridge" and i2 == i, "zone bridge " .. i .. " got " .. tostring(z2))
+	check((Grid.zoneAt(Grid.landing(i))) == "mainland", "landing on battlefield " .. i)
+	check((Grid.zoneAt(Grid.yard(i))) == "plot", "yard on island " .. i)
 end
--- mainland far from homeland
-local farthest = 0
-for i = 1, Config.MaxPlots do
-	farthest = math.max(farthest, Grid.plotOrigin(i).Z + Grid.PlotSize / 2)
-end
-check(Config.MainlandOrigin.Z - Config.MainlandSize / 2 > farthest + 100, "mainland overlaps homeland")
+check((Grid.zoneAt(Config.MainlandOrigin)) == "mainland", "zone centre")
+check((Grid.zoneAt(Config.MainlandOrigin + V3.new(2200, 0, 0))) == "sea", "zone sea")
+local gx, gz = Grid.snapLocal(5.3, -7.9, 8, 12, 90)
+check((gx - 6) % 4 == 0 and (gz - 4) % 4 == 0, ("grid snap edges on cells %.2f %.2f"):format(gx, gz))
+
+-- Footprints (free-form placement geometry)
+local Footprint = mod("Util.Footprint")
+local a = Footprint.rect(0, 0, 8, 8, 0)
+check(not Footprint.overlaps(a, Footprint.rect(8, 0, 8, 8, 0)), "touching rects don't overlap")
+check(Footprint.overlaps(a, Footprint.rect(7, 0, 8, 8, 0)), "overlapping rects")
+check(Footprint.overlaps(a, Footprint.rect(9, 0, 8, 8, 45)), "rotated corner overlaps")
+check(not Footprint.overlaps(a, Footprint.rect(10, 0, 8, 8, 45)), "rotated clear")
+check(Footprint.inside(Footprint.rect(0, 0, 8, 8, 30), 10) and not Footprint.inside(Footprint.rect(236, 0, 8, 8, 45), 239.5), "inside land")
+local sx, sz, sa, sl = Footprint.segment(0, 0, 30, 40)
+check(math.abs(sl - 50) < 1e-6 and math.abs(sx - 15) < 1e-6 and math.abs(sz - 20) < 1e-6, "segment centre/length")
+local e1, e2 = Footprint.ends(Footprint.rect(sx, sz, 8, sl, sa))
+check((e1 - Vector2.new(0, 0)).Magnitude < 1e-3 and (e2 - Vector2.new(30, 40)).Magnitude < 1e-3, "segment ends")
+local h = {}
+Footprint.hashAdd(h, 7, Footprint.rect(100, 100, 8, 8, 0))
+check(Footprint.hashQuery(h, Footprint.rect(104, 100, 4, 4, 0))[7] == true, "hash finds neighbour")
+check(Footprint.hashQuery(h, Footprint.rect(-100, -100, 4, 4, 0))[7] == nil, "hash skips far")
+Footprint.hashRemove(h, 7, Footprint.rect(100, 100, 8, 8, 0))
+check(next(h) == nil, "hash empties")
 
 -- Catalog consistency
 local passKeys = {}
@@ -205,7 +238,13 @@ for i, q in Quests do
 	if q.kind == "stock" then check(Weapons.get(q.target) ~= nil, "quest weapon " .. i) end
 end
 for _, p in WarMap do
-	check(math.abs(p.offset.X) < Config.MainlandSize / 2 - 150 and math.abs(p.offset.Z) < Config.MainlandSize / 2 - 150, "point near edge " .. p.id)
+	check(p.offset.Magnitude < Config.MainlandRadius - 250, "point near edge " .. p.id)
+	for i = 1, Config.MaxPlots do
+		-- keep strategic points off the bridge lanes
+		local dir = Grid.direction(i)
+		local along = p.offset:Dot(dir)
+		check(p.id == "capital" or along < 0 or (p.offset - dir * along).Magnitude > 120, ("point %s on lane %d"):format(p.id, i))
+	end
 end
 
 -- ModelBuilder: every asset builds, has parts and a primary part
@@ -249,6 +288,8 @@ for _, w in Weapons.all() do
 	check(ok and m.PrimaryPart ~= nil, "projectile " .. w.id .. ": " .. tostring(m))
 end
 check(pcall(ModelBuilder.fuelTruck), "fuel truck")
+local okRoad, road = pcall(ModelBuilder.roadSegment, 8, 53.5, 3)
+check(okRoad and road.PrimaryPart ~= nil and math.abs(road.PrimaryPart.Size.Z - 53.5) < 1e-6, "road segment model")
 for _, p in WarMap do
 	local ok, m = pcall(ModelBuilder.warPoint, p.model, 130)
 	check(ok, "war point " .. p.model .. ": " .. tostring(m))

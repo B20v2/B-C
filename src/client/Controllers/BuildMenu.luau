@@ -8,9 +8,11 @@
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage.Shared
+local Config = require(Shared.Config)
 local Buildings = require(Shared.Catalog.Buildings)
 local Weapons = require(Shared.Catalog.Weapons)
 local Research = require(Shared.Catalog.Research)
@@ -370,7 +372,7 @@ end
 local function toolButton(parent: Instance, label: string, key: string, icon: string, order: number, onClick: () -> ()): TextButton
 	local btn = Lib.button({
 		Name = label,
-		Size = UDim2.fromOffset(62, 50),
+		Size = UDim2.fromOffset(50, 50),
 		BackgroundColor3 = C.Raised,
 		LayoutOrder = order,
 		Parent = parent,
@@ -380,7 +382,7 @@ local function toolButton(parent: Instance, label: string, key: string, icon: st
 	ic.AnchorPoint = Vector2.new(0.5, 0)
 	ic.Position = UDim2.new(0.5, 0, 0, 8)
 	ic.Parent = btn
-	Lib.display({ Text = label, TextSize = 10, TextColor3 = C.TextSoft, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.new(0, 0, 1, -18), Size = UDim2.new(1, 0, 0, 14), Parent = btn })
+	Lib.display({ Name = "Label", Text = label, TextSize = 9, TextColor3 = C.TextSoft, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.new(0, 0, 1, -18), Size = UDim2.new(1, 0, 0, 14), Parent = btn })
 	if key ~= "" then
 		Lib.text({ Text = key, FontFace = Theme.Font.Mono, TextSize = 9, TextColor3 = C.Faint, Position = UDim2.fromOffset(4, 2), Size = UDim2.fromOffset(10, 10), Parent = btn })
 	end
@@ -395,7 +397,7 @@ local function buildRight(parent: Frame)
 	refs.detailPrice = Lib.display({ Text = "", TextSize = 20, TextColor3 = C.Good, Position = UDim2.fromOffset(188, 52), Size = UDim2.new(1, -198, 0, 22), Parent = parent })
 	refs.detailTime = Lib.text({ Text = "", FontFace = Theme.Font.BodyBold, TextSize = 12, TextColor3 = C.Info, Position = UDim2.fromOffset(188, 76), Size = UDim2.new(1, -198, 0, 16), Parent = parent })
 	refs.detailReq = Lib.text({
-		Text = "Pick something from the list to place it on your land.",
+		Text = "Pick anything and build it anywhere on your island, at any angle. Roads are drawn point to point.",
 		TextSize = 12,
 		TextColor3 = C.TextSoft,
 		TextWrapped = true,
@@ -425,11 +427,14 @@ local function buildRight(parent: Frame)
 	refs.toolRotate = toolButton(tools, "ROTATE", "6", "undo", 5, function()
 		Placement.rotate()
 	end)
+	refs.toolSnap = toolButton(tools, "SNAP", "G", "target", 6, function()
+		Placement.toggleSnap()
+	end)
 	local close = Lib.button({
 		Name = "Close",
 		Variant = "danger",
-		Size = UDim2.fromOffset(62, 50),
-		LayoutOrder = 6,
+		Size = UDim2.fromOffset(50, 50),
+		LayoutOrder = 7,
 		Parent = tools,
 		Activated = function()
 			BuildMenu.close()
@@ -471,7 +476,7 @@ function BuildMenu.refreshDetail()
 		refs.detailPrice.Text = ""
 		refs.detailTime.Text = ""
 		refs.detailReq.Text = s.tool == "delete" and "Click a building to remove it. 50% refund (100% while it's still under construction)."
-			or (s.tool == "move" and "Click a building, then click its new spot. R rotates it." or "Pick something from the list to place it on your land.")
+			or (s.tool == "move" and "Click a building, then click its new spot. R rotates it." or "Pick anything and build it anywhere on your island, at any angle. Roads are drawn point to point.")
 	end
 end
 
@@ -485,6 +490,11 @@ local function refreshTools()
 	mark(refs.toolDelete, s.tool == "delete")
 	mark(refs.toolMove, s.tool == "move")
 	mark(refs.toolDrag, s.drag)
+	mark(refs.toolSnap, s.snap == "grid")
+	local snapLabel = refs.toolSnap:FindFirstChild("Label") :: TextLabel?
+	if snapLabel then
+		snapLabel.Text = s.snap == "grid" and "GRID" or "FREE"
+	end
 	for _, entry in cards do
 		updateCard(entry)
 	end
@@ -500,11 +510,27 @@ function BuildMenu.refreshTooltip()
 		return
 	end
 	tooltip.Visible = true
-	if def then
-		refs.tipName.Text = (s.moving and "MOVING " or "") .. string.upper(def.name)
+	local cash = ClientState.get("cash") or 0
+	local snap = s.snap == "grid" and "G FREE" or "G GRID"
+	if def and def.id == "road" and not s.moving then
+		local road = s.road
+		if road then
+			refs.tipName.Text = ("ROAD  ·  %d STUDS"):format(math.floor(road.len + 0.5))
+			refs.tipPrice.Text = "$" .. Format.commas(road.cost)
+			refs.tipPrice.TextColor3 = road.valid and C.Good or C.Bad
+			refs.tipHint.Text = "CLICK NEXT POINT  ·  SAME SPOT / RMB / Q FINISH  ·  SHIFT 15°"
+		else
+			refs.tipName.Text = "ROAD"
+			refs.tipPrice.Text = ("$%s / %d studs"):format(Format.commas(def.cost), def.size[2] * Config.CellSize)
+			refs.tipPrice.TextColor3 = cash >= def.cost and C.Good or C.Bad
+			refs.tipHint.Text = "CLICK START, THEN CLICK OR DRAG TO DRAW  ·  ENDS SNAP TO ROADS  ·  " .. snap
+		end
+	elseif def then
+		refs.tipName.Text = ("%s%s  ·  %d°"):format(s.moving and "MOVING " or "", string.upper(def.name), math.floor(s.rotation + 0.5) % 360)
 		refs.tipPrice.Text = s.moving and "" or ("$" .. Format.commas(def.cost))
-		refs.tipPrice.TextColor3 = (ClientState.get("cash") or 0) >= def.cost and C.Good or C.Bad
-		refs.tipHint.Text = s.drag and "HOLD LMB + DRAG  ·  R ROTATE  ·  Q CANCEL" or "LMB PLACE  ·  R ROTATE  ·  Q CANCEL"
+		refs.tipPrice.TextColor3 = cash >= def.cost and C.Good or C.Bad
+		local rot = s.snap == "grid" and "R ROTATE 90°" or "R / SHIFT+R ROTATE 15°  ·  AUTO-ALIGNS TO ROADS (ALT OFF)"
+		refs.tipHint.Text = (s.drag and "HOLD LMB + DRAG A ROW" or "LMB PLACE") .. "  ·  " .. rot .. "  ·  " .. snap .. "  ·  Q CANCEL"
 	else
 		refs.tipName.Text = s.tool == "delete" and "DEMOLISH MODE" or "MOVE MODE"
 		refs.tipPrice.Text = ""
@@ -641,6 +667,11 @@ function BuildMenu.init(gui: GuiObject)
 	refs.tipHint = Lib.text({ Text = "", FontFace = Theme.Font.Mono, TextSize = 10, TextColor3 = C.Muted, Position = UDim2.new(0.42, 0, 0, 0), Size = UDim2.new(0.58, -130, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, Parent = tooltip })
 
 	Placement.onChanged(refreshTools)
+	RunService.RenderStepped:Connect(function()
+		if root.Visible and Placement.state().drawing then
+			BuildMenu.refreshTooltip()
+		end
+	end)
 	ClientState.onAny(function(patch)
 		if not root.Visible then
 			return

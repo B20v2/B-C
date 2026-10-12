@@ -13,9 +13,11 @@ export type BRuntime = {
 	uid: number,
 	id: string,
 	def: any,
-	x: number,
+	x: number, -- island-local studs (footprint centre)
 	z: number,
-	r: number,
+	r: number, -- yaw in degrees
+	len: number?, -- road segments: length in studs
+	cost: number, -- what was paid (roads scale with length)
 	model: Model?,
 	finishAt: number?,
 	startAt: number?,
@@ -39,9 +41,10 @@ export type Nation = {
 	data: { [string]: any },
 	plotIndex: number,
 	origin: Vector3,
+	frame: CFrame, -- island frame; -Z faces the battlefield
 	folder: Folder,
 	buildings: { [number]: BRuntime },
-	grid: { [number]: number },
+	grid: { [number]: { [number]: boolean } }, -- spatial hash (Footprint)
 	stats: { [string]: any },
 	passes: { [string]: boolean },
 	premium: boolean,
@@ -104,11 +107,16 @@ function Nations.speed(n: Nation): number
 	return n.passes.FastBuild and 2 or 1
 end
 
+-- Finished buildings of a type. Road segments count per 8-stud tile of length.
 function Nations.countBuilt(n: Nation, id: string): number
 	local c = 0
 	for _, b in n.buildings do
 		if b.id == id and not b.finishAt then
-			c += 1
+			if b.len then
+				c += math.max(1, math.floor(b.len / 8 + 0.5))
+			else
+				c += 1
+			end
 		end
 	end
 	return c

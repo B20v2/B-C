@@ -1,7 +1,8 @@
 --[[
 	ConquestService
-	Generates the mainland (low-poly hills, dirt roads, forests, strategic
-	points, staging pads) and runs the capture loop:
+	Generates the central battlefield (a round continent in the middle of the
+	map with hills, dirt roads, forests, strategic points and a staging pad
+	where every nation's bridge lands) and runs the capture loop:
 
 	  * Each point has a garrison. Enemy units in range shoot it down, missile
 	    strikes knock big chunks off it, and it regenerates when left alone.
@@ -18,6 +19,7 @@ local Config = require(Shared.Config)
 local WarMap = require(Shared.Catalog.WarMap)
 local ModelBuilder = require(Shared.ModelBuilder)
 local AssetLibrary = require(Shared.AssetLibrary)
+local Grid = require(Shared.Util.Grid)
 local Nations = require(script.Parent.Nations)
 
 type Nation = Nations.Nation
@@ -38,7 +40,7 @@ local S: { [string]: any }
 local points: { Point } = {}
 
 local ORIGIN = Config.MainlandOrigin
-local HALF = Config.MainlandSize / 2
+local RADIUS = Config.MainlandRadius
 local NEUTRAL = Color3.fromRGB(200, 200, 196)
 
 local function part(parent: Instance, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material?): Part
@@ -58,45 +60,54 @@ end
 ---------------------------------------------------------------------------
 -- World generation
 ---------------------------------------------------------------------------
+local function disc(world: Folder, name: string, radius: number, y: number, thick: number, color: Color3, material: Enum.Material): Part
+	local p = part(world, Vector3.new(thick, radius * 2, radius * 2), CFrame.new(ORIGIN + Vector3.new(0, y, 0)) * CFrame.Angles(0, 0, math.rad(90)), color, material)
+	p.Shape = Enum.PartType.Cylinder
+	p.Name = name
+	return p
+end
+
 local function buildGround(world: Folder)
-	local tile = Config.MainlandSize / 2
-	for ix = -1, 0 do
-		for iz = -1, 0 do
-			local c = ORIGIN + Vector3.new((ix + 0.5) * tile, -3, (iz + 0.5) * tile)
-			part(world, Vector3.new(tile, 6, tile), CFrame.new(c), Color3.fromRGB(86, 110, 60), Enum.Material.Grass).Name = "Ground"
+	disc(world, "Ground", RADIUS - 40, -3, 6, Color3.fromRGB(86, 110, 60), Enum.Material.Grass)
+	disc(world, "Beach", RADIUS, -3.6, 6, Color3.fromRGB(206, 184, 136), Enum.Material.Sand)
+end
+
+-- Is this offset near one of the bridge lanes (landing -> capital)?
+local function nearLane(v: Vector3, width: number): boolean
+	for i = 1, Config.MaxPlots do
+		local dir = Grid.direction(i)
+		local along = v:Dot(dir)
+		if along > 0 then
+			local side = (v - dir * along).Magnitude
+			if side < width then
+				return true
+			end
 		end
 	end
-	local rim = 60
-	for _, s in { -1, 1 } do
-		part(world, Vector3.new(Config.MainlandSize + rim * 2, 6, rim), CFrame.new(ORIGIN + Vector3.new(0, -3.5, s * (HALF + rim / 2))), Color3.fromRGB(206, 184, 136), Enum.Material.Sand)
-		part(world, Vector3.new(rim, 6, Config.MainlandSize), CFrame.new(ORIGIN + Vector3.new(s * (HALF + rim / 2), -3.5, 0)), Color3.fromRGB(206, 184, 136), Enum.Material.Sand)
-	end
+	return false
 end
 
 local function buildHills(world: Folder)
 	local rng = Random.new(42)
 	local greens = { Color3.fromRGB(72, 96, 52), Color3.fromRGB(96, 118, 62), Color3.fromRGB(118, 128, 70), Color3.fromRGB(84, 104, 56) }
-	for _ = 1, 70 do
-		-- hills hug the edges so the middle stays open for fighting
-		local side = rng:NextInteger(1, 4)
-		local along = rng:NextNumber(-HALF, HALF)
-		local inward = rng:NextNumber(0, 260)
-		local x, z
-		if side == 1 then
-			x, z = along, -HALF + inward
-		elseif side == 2 then
-			x, z = along, HALF - inward
-		elseif side == 3 then
-			x, z = -HALF + inward, along
-		else
-			x, z = HALF - inward, along
+	local placed = 0
+	for _ = 1, 400 do
+		if placed >= 56 then
+			break
 		end
-		local size = Vector3.new(rng:NextNumber(60, 180), rng:NextNumber(30, 90), rng:NextNumber(60, 180))
-		local cf = CFrame.new(ORIGIN + Vector3.new(x, -size.Y * 0.25, z))
-			* CFrame.Angles(rng:NextNumber(-0.5, 0.5), rng:NextNumber(0, math.pi), rng:NextNumber(-0.5, 0.5))
-		local hill = part(world, size, cf, greens[rng:NextInteger(1, #greens)])
-		hill.Name = "Hill"
-		hill.CanQuery = false
+		-- hills ring the shore between the bridge lanes so the middle stays open
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = rng:NextNumber(RADIUS - 300, RADIUS - 110)
+		local v = Vector3.new(math.sin(a) * r, 0, math.cos(a) * r)
+		if not nearLane(v, 150) then
+			placed += 1
+			local size = Vector3.new(rng:NextNumber(60, 170), rng:NextNumber(30, 80), rng:NextNumber(60, 170))
+			local cf = CFrame.new(ORIGIN + v + Vector3.new(0, -size.Y * 0.25, 0))
+				* CFrame.Angles(rng:NextNumber(-0.5, 0.5), rng:NextNumber(0, math.pi), rng:NextNumber(-0.5, 0.5))
+			local hill = part(world, size, cf, greens[rng:NextInteger(1, #greens)])
+			hill.Name = "Hill"
+			hill.CanQuery = false
+		end
 	end
 end
 
@@ -123,9 +134,12 @@ end
 
 local function buildTrees(world: Folder)
 	local rng = Random.new(9)
-	for _ = 1, 26 do
-		local c = ORIGIN + Vector3.new(rng:NextNumber(-HALF + 120, HALF - 120), 0, rng:NextNumber(-HALF + 120, HALF - 120))
-		local tooClose = false
+	for _ = 1, 40 do
+		local a = rng:NextNumber(0, math.pi * 2)
+		local r = rng:NextNumber(220, RADIUS - 120)
+		local v = Vector3.new(math.sin(a) * r, 0, math.cos(a) * r)
+		local c = ORIGIN + v
+		local tooClose = nearLane(v, 90)
 		for _, def in WarMap do
 			if ((ORIGIN + def.offset) - c).Magnitude < 160 then
 				tooClose = true
@@ -158,17 +172,23 @@ local function buildTrees(world: Folder)
 	end
 end
 
+-- Staging pad where each nation's bridge lands, with its colours flying.
 local function buildStaging(world: Folder)
 	for i = 1, Config.MaxPlots do
-		local pos = ORIGIN + Vector3.new(-1050 + (i - 1) * 300, 0, HALF - 110)
-		local pad = part(world, Vector3.new(90, 0.4, 60), CFrame.new(pos + Vector3.new(0, 0.2, 0)), Color3.fromRGB(176, 176, 168))
+		local pos = Grid.landing(i)
+		local cf = CFrame.lookAt(pos, ORIGIN) -- -Z faces the capital
+		local pad = part(world, Vector3.new(90, 0.4, 70), cf * CFrame.new(0, 0.2, 0), Color3.fromRGB(176, 176, 168), Enum.Material.Concrete)
 		pad.Name = "Staging_" .. i
-		part(world, Vector3.new(0.6, 14, 0.6), CFrame.new(pos + Vector3.new(-40, 7, -26)), Color3.fromRGB(80, 84, 90))
-		local flag = part(world, Vector3.new(0.2, 4, 7), CFrame.new(pos + Vector3.new(-40, 12, -22.5)), Config.NationColors[i])
-		flag.Name = "Flag"
-		-- tunnel mouth
-		part(world, Vector3.new(26, 14, 10), CFrame.new(pos + Vector3.new(0, 7, 40)), Color3.fromRGB(120, 124, 116))
-		part(world, Vector3.new(16, 10, 10.4), CFrame.new(pos + Vector3.new(0, 5, 40)), Color3.fromRGB(30, 32, 36))
+		pad.CanCollide = false
+		for _, side in { -1, 1 } do
+			part(world, Vector3.new(0.6, 14, 0.6), cf * CFrame.new(side * 40, 7, 30), Color3.fromRGB(80, 84, 90))
+			local flag = part(world, Vector3.new(7, 4, 0.2), cf * CFrame.new(side * 40 + 3.5, 12, 30), Config.NationColors[i])
+			flag.Name = "Flag"
+		end
+		-- sandbag berm around the back of the pad
+		for k = -2, 2 do
+			part(world, Vector3.new(16, 2.4, 3), cf * CFrame.new(k * 17, 1.2, 38), Color3.fromRGB(160, 146, 108), Enum.Material.Fabric).Name = "Sandbags"
+		end
 	end
 end
 
@@ -368,14 +388,12 @@ function ConquestService.init(services)
 	local capital = ORIGIN
 	for i, def in WarMap do
 		if def.id ~= "capital" then
-			buildRoad(world, capital, ORIGIN + def.offset, (i % 2 == 0 and 1 or -1) * 140)
+			buildRoad(world, capital, ORIGIN + def.offset, (i % 2 == 0 and 1 or -1) * 90)
 		end
 	end
 	for i = 1, Config.MaxPlots do
-		local staging = ORIGIN + Vector3.new(-1050 + (i - 1) * 300, 0, HALF - 110)
-		if i % 2 == 1 then
-			buildRoad(world, staging, capital, (i - 4) * 30)
-		end
+		-- every bridge feeds a dirt road to the capital
+		buildRoad(world, Grid.shore(i), capital, (i % 2 == 0 and 1 or -1) * 40)
 	end
 	buildTrees(world)
 	buildStaging(world)

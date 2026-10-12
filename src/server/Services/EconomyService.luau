@@ -114,11 +114,11 @@ function EconomyService.compute(n: Nation, dt: number)
 			setAttr(b.model, "Status", "Under Construction")
 		elseif b.damaged then
 			damaged += 1
-			upkeep += def.cost * Config.UpkeepRate
+			upkeep += b.cost * Config.UpkeepRate
 			b.eff = 0
 			setAttr(b.model, "Status", "Damaged - Needs Repair")
 		else
-			upkeep += def.cost * Config.UpkeepRate
+			upkeep += b.cost * Config.UpkeepRate
 			local road = b.connected and 1 or 0.5
 			local eff = road
 			if def.workers then

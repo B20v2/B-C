@@ -1164,6 +1164,36 @@ function ModelBuilder.setConstruction(model: Model, on: boolean)
 	end
 end
 
+-- Free-form road segment along local Z (width x len). Round caps at both
+-- ends fill the joints, so segments meeting at any angle read as one road.
+-- A single tile (len <= width) stays square, like the GRID-mode road tile.
+function ModelBuilder.roadSegment(width: number, len: number, seed: number?): Model
+	local model = Instance.new("Model")
+	model.Name = "road"
+	M = model
+	local lift = ((seed or 0) % 5) * 0.012 -- overlapping junctions don't z-fight
+	local h = 0.3 + lift
+	local base = blk(width, h, len, 0, 0, 0, C.asphalt)
+	base.Name = "Base"
+	model.PrimaryPart = base
+	if len > width + 0.01 then
+		for _, z in { -len / 2, len / 2 } do
+			local cap = cyl(h, width, 0, 0, z, C.asphalt)
+			cap.Name = "Cap"
+		end
+	end
+	if len > 3 then
+		local lineLen = math.max(len - width, 1)
+		local centre = noCollide(blk(0.35, 0.02, lineLen, 0, h, 0, C.line))
+		centre.CanQuery = false
+		for _, side in { -1, 1 } do
+			local edge = noCollide(blk(0.25, 0.02, lineLen, side * (width / 2 - 0.7), h, 0, C.line))
+			edge.CanQuery = false
+		end
+	end
+	return model
+end
+
 -- Damaged by a strike: scorched colours + smoke until repaired.
 function ModelBuilder.setDamaged(model: Model, on: boolean)
 	for _, d in model:GetDescendants() do

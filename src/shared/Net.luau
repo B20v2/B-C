@@ -14,6 +14,7 @@ local Net = {}
 Net.Functions = {
 	"PlaceBuilding",
 	"PlaceMany",
+	"PlaceRoad",
 	"DeleteBuilding",
 	"MoveBuilding",
 	"Undo",

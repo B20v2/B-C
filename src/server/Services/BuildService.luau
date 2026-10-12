@@ -1,8 +1,11 @@
 --[[
 	BuildService
-	Server-authoritative placement: validates every request against the grid,
+	Server-authoritative free-form placement. Buildings sit anywhere on your
+	island at any angle (island-local studs + yaw), roads are drawn as
+	segments of any length and direction, and every request is validated
+	against footprint overlap (Footprint SAT + spatial hash), your land,
 	cash, research, passes and limits. Owns building runtime objects, their
-	models, construction timers, road connectivity, undo, move and repair.
+	models, construction timers, road access, undo, move and repair.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -11,6 +14,7 @@ local TextService = game:GetService("TextService")
 local Shared = ReplicatedStorage.Shared
 local Config = require(Shared.Config)
 local Grid = require(Shared.Util.Grid)
+local Footprint = require(Shared.Util.Footprint)
 local Unlocks = require(Shared.Util.Unlocks)
 local Buildings = require(Shared.Catalog.Buildings)
 local ModelBuilder = require(Shared.ModelBuilder)
@@ -23,40 +27,75 @@ type BRuntime = Nations.BRuntime
 local BuildService = {}
 local S: { [string]: any }
 
----------------------------------------------------------------------------
--- Grid helpers
----------------------------------------------------------------------------
-local function footprintOf(def, r: number): (number, number)
-	return Grid.footprint(def.size[1], def.size[2], r)
-end
+local HALF = Grid.PlotSize / 2 - 0.5 -- buildable half-extent on an island
+local ROAD_REACH = 3 -- a building within this many studs of a road is connected
 
-local function cellsOf(def, x: number, z: number, r: number): { number }
-	local fw, fd = footprintOf(def, r)
-	local out = {}
-	for cx = x, x + fw - 1 do
-		for cz = z, z + fd - 1 do
-			table.insert(out, Grid.key(cx, cz))
-		end
-	end
-	return out
-end
-
+---------------------------------------------------------------------------
+-- Footprints
+---------------------------------------------------------------------------
 local function isRoadDef(def): boolean
 	return def.id == "road" or def.id == "plaza"
 end
+BuildService.isRoadDef = isRoadDef
 
-function BuildService.canPlace(n: Nation, def, x: number, z: number, r: number, ignoreUid: number?): (boolean, string?)
-	if typeof(x) ~= "number" or typeof(z) ~= "number" or x ~= x or z ~= z then
+-- Segment roads stretch; everything else uses its catalog footprint.
+local function isSegment(def): boolean
+	return def.id == "road"
+end
+
+local function rectFor(def, x: number, z: number, angle: number, len: number?): Footprint.Rect
+	local w, d = Footprint.size(def, len)
+	return Footprint.rect(x, z, w, d, angle)
+end
+
+local function rectOf(b: BRuntime): Footprint.Rect
+	return rectFor(b.def, b.x, b.z, b.r, b.len)
+end
+
+-- Price of a placement (roads are charged per tile of length).
+local function costFor(def, len: number?): number
+	if len and isSegment(def) then
+		return def.cost * math.max(1, math.ceil(len / (def.size[2] * Config.CellSize) - 0.01))
+	end
+	return def.cost
+end
+
+local function finite(v: any): boolean
+	return typeof(v) == "number" and v == v and math.abs(v) < 1e4
+end
+
+local function cleanAngle(a: any): number
+	if not finite(a) then
+		return 0
+	end
+	return (math.floor(a * 2 + 0.5) / 2) % 360
+end
+
+local function cleanPos(v: number): number
+	return math.floor(v * 20 + 0.5) / 20
+end
+
+function BuildService.canPlace(n: Nation, def, x: number, z: number, angle: number, len: number?, ignoreUid: number?): (boolean, string?)
+	if not finite(x) or not finite(z) or not finite(angle) then
 		return false, "Invalid position"
 	end
-	local fw, fd = footprintOf(def, r)
-	if not Grid.inBounds(x, z, fw, fd) then
+	local rect = rectFor(def, x, z, angle, len)
+	if not Footprint.inside(rect, HALF) then
 		return false, "Outside your land"
 	end
-	for _, key in cellsOf(def, x, z, r) do
-		local occ = n.grid[key]
-		if occ and occ ~= ignoreUid then
-			return false, "Space is taken"
+	local ground = isRoadDef(def)
+	-- a road's round end caps count against buildings
+	local mine = isSegment(def) and Footprint.capped(rect) or rect
+	for uid in Footprint.hashQuery(n.grid, mine) do
+		local other = n.buildings[uid]
+		if other and uid ~= ignoreUid and not (ground and isRoadDef(other.def)) then
+			local theirs = rectOf(other)
+			if isSegment(other.def) then
+				theirs = Footprint.capped(theirs)
+			end
+			if Footprint.overlaps(mine, theirs) then
+				return false, (isRoadDef(other.def) and not ground) and "Can't build on a road" or "Space is taken"
+			end
 		end
 	end
 	return true, nil
@@ -66,23 +105,13 @@ local function connectedAt(n: Nation, b: BRuntime): boolean
 	if not b.def.needsRoad or isRoadDef(b.def) then
 		return true
 	end
-	local fw, fd = footprintOf(b.def, b.r)
-	local function isRoad(cx: number, cz: number): boolean
-		if cx < 0 or cz < 0 or cx >= Grid.PlotCells or cz >= Grid.PlotCells then
-			return false
-		end
-		local uid = n.grid[Grid.key(cx, cz)]
-		local other = uid and n.buildings[uid]
-		return other ~= nil and isRoadDef(other.def) and other.finishAt == nil
-	end
-	for cx = b.x, b.x + fw - 1 do
-		if isRoad(cx, b.z - 1) or isRoad(cx, b.z + fd) then
-			return true
-		end
-	end
-	for cz = b.z, b.z + fd - 1 do
-		if isRoad(b.x - 1, cz) or isRoad(b.x + fw, cz) then
-			return true
+	local reach = Footprint.grow(rectOf(b), ROAD_REACH)
+	for uid in Footprint.hashQuery(n.grid, reach) do
+		local other = n.buildings[uid]
+		if other and other ~= b and isRoadDef(other.def) and other.finishAt == nil then
+			if Footprint.overlaps(reach, rectOf(other), 0) then
+				return true
+			end
 		end
 	end
 	return false
@@ -113,16 +142,26 @@ local function applyBillboard(n: Nation, b: BRuntime)
 end
 
 function BuildService.worldCFrame(n: Nation, b: BRuntime): CFrame
-	return Grid.cframeFor(n.origin, b.x, b.z, b.def.size[1], b.def.size[2], b.r)
+	return Grid.toWorld(n.plotIndex, b.x, b.z, b.r)
 end
 
 local function spawnModel(n: Nation, b: BRuntime)
 	if b.model then
 		b.model:Destroy()
 	end
-	local model = ModelBuilder.building(b.def)
+	local model
+	if isSegment(b.def) and b.len then
+		model = ModelBuilder.roadSegment(b.def.size[1] * Config.CellSize, b.len, b.uid)
+	else
+		model = ModelBuilder.building(b.def)
+	end
 	model.Name = tostring(b.uid)
 	model:PivotTo(BuildService.worldCFrame(n, b))
+	-- placement data for the client ghost / move tool
+	model:SetAttribute("PX", b.x)
+	model:SetAttribute("PZ", b.z)
+	model:SetAttribute("Angle", b.r)
+	model:SetAttribute("Len", b.len)
 	model:SetAttribute("Uid", b.uid)
 	model:SetAttribute("BuildingId", b.id)
 	model:SetAttribute("OwnerId", n.userId)
@@ -147,7 +186,7 @@ end
 ---------------------------------------------------------------------------
 -- Runtime creation
 ---------------------------------------------------------------------------
-local function newRuntime(n: Nation, def, x: number, z: number, r: number, uid: number?): BRuntime
+local function newRuntime(n: Nation, def, x: number, z: number, r: number, len: number?, uid: number?): BRuntime
 	local id = uid
 	if not id then
 		id = n.data.NextUid
@@ -160,6 +199,8 @@ local function newRuntime(n: Nation, def, x: number, z: number, r: number, uid: 
 		x = x,
 		z = z,
 		r = r,
+		len = len,
+		cost = costFor(def, len),
 		model = nil,
 		finishAt = nil,
 		startAt = nil,
@@ -186,39 +227,45 @@ end
 
 local function insert(n: Nation, b: BRuntime)
 	n.buildings[b.uid] = b
-	for _, key in cellsOf(b.def, b.x, b.z, b.r) do
-		n.grid[key] = b.uid
-	end
+	Footprint.hashAdd(n.grid, b.uid, rectOf(b))
 end
 
 local function unindex(n: Nation, b: BRuntime)
-	for _, key in cellsOf(b.def, b.x, b.z, b.r) do
-		if n.grid[key] == b.uid then
-			n.grid[key] = nil
-		end
+	Footprint.hashRemove(n.grid, b.uid, rectOf(b))
+end
+
+local function countBuildings(n: Nation): number
+	local c = 0
+	for _ in n.buildings do
+		c += 1
 	end
+	return c
 end
 
 function BuildService.access(n: Nation): Unlocks.Access
 	return { researched = n.data.Researched, passes = n.passes }
 end
 
--- Core placement used by requests, undo and loading.
-local function placeInternal(n: Nation, def, x: number, z: number, r: number, charge: boolean): (boolean, string?, BRuntime?)
-	local ok, err = BuildService.canPlace(n, def, x, z, r)
+-- Core placement used by requests and undo.
+local function placeInternal(n: Nation, def, x: number, z: number, r: number, len: number?, charge: boolean): (boolean, string?, BRuntime?)
+	local ok, err = BuildService.canPlace(n, def, x, z, r, len)
 	if not ok then
 		return false, err, nil
 	end
 	if def.max and Nations.countAll(n, def.id) >= def.max then
 		return false, ("Limit reached (max %d)"):format(def.max), nil
 	end
+	if countBuildings(n) >= Config.MaxBuildings then
+		return false, ("Your nation is at the %d building limit"):format(Config.MaxBuildings), nil
+	end
+	local cost = costFor(def, len)
 	if charge then
-		if n.data.Cash < def.cost then
+		if n.data.Cash < cost then
 			return false, "Not enough cash", nil
 		end
-		n.data.Cash -= def.cost
+		n.data.Cash -= cost
 	end
-	local b = newRuntime(n, def, x, z, r)
+	local b = newRuntime(n, def, x, z, r, len)
 	local time = def.buildTime / Nations.speed(n)
 	if time > 0 then
 		b.startAt = Nations.now()
@@ -311,13 +358,33 @@ end
 ---------------------------------------------------------------------------
 -- Load / save
 ---------------------------------------------------------------------------
+-- Old saves stored grid cells (min corner on a 100-cell plot) and quarter
+-- turns; convert them to island-local studs + degrees.
+local OLD_CELLS = 100
+
+local function migrate(def, s): (number, number, number)
+	local r = s.r or 0
+	local fw, fd = def.size[1], def.size[2]
+	if r % 2 == 1 then
+		fw, fd = fd, fw
+	end
+	local cell = Config.CellSize
+	return (s.x + fw / 2 - OLD_CELLS / 2) * cell, (s.z + fd / 2 - OLD_CELLS / 2) * cell, (r % 4) * 90
+end
+
 function BuildService.loadNation(n: Nation)
 	for _, s in n.data.Buildings do
 		local def = Buildings.get(s.id)
-		if def then
-			local r = s.r or 0
-			if BuildService.canPlace(n, def, s.x, s.z, r) then
-				local b = newRuntime(n, def, s.x, s.z, r, s.u)
+		if def and finite(s.x) and finite(s.z) then
+			local x, z, r, len
+			if s.a ~= nil then
+				x, z, r, len = s.x, s.z, cleanAngle(s.a), s.L
+			else
+				x, z, r = migrate(def, s)
+				len = isSegment(def) and def.size[2] * Config.CellSize or nil
+			end
+			if BuildService.canPlace(n, def, x, z, r, len) then
+				local b = newRuntime(n, def, x, z, r, len, s.u)
 				b.finishAt = s.f
 				b.startAt = s.st
 				b.damaged = s.d == true
@@ -374,7 +441,8 @@ function BuildService.serialize(n: Nation)
 			id = b.id,
 			x = b.x,
 			z = b.z,
-			r = b.r ~= 0 and b.r or nil,
+			a = b.r,
+			L = b.len,
 			f = b.finishAt,
 			st = b.startAt,
 			d = b.damaged or nil,
@@ -411,7 +479,7 @@ function BuildService.repairAll(n: Nation, free: boolean): (number, number)
 	local count, cost = 0, 0
 	for _, b in n.buildings do
 		if b.damaged then
-			local price = math.floor(b.def.cost * Config.RepairCostRate)
+			local price = math.floor(b.cost * Config.RepairCostRate)
 			if free or n.data.Cash >= price then
 				if not free then
 					n.data.Cash -= price
@@ -436,13 +504,6 @@ local function nationOf(player: Player): Nation?
 	return nil
 end
 
-local function validRotation(r: any): number
-	if typeof(r) ~= "number" then
-		return 0
-	end
-	return math.floor(r) % 4
-end
-
 local function requireDef(n: Nation, id: any): (any, string?)
 	if typeof(id) ~= "string" then
 		return nil, "Unknown building"
@@ -458,7 +519,8 @@ local function requireDef(n: Nation, id: any): (any, string?)
 	return def, nil
 end
 
-local function onPlace(player: Player, id: any, x: any, z: any, r: any)
+-- x, z: island-local studs (footprint centre); a: yaw in degrees.
+local function onPlace(player: Player, id: any, x: any, z: any, a: any)
 	local n = nationOf(player)
 	if not n then
 		return { ok = false, err = "Loading..." }
@@ -467,19 +529,21 @@ local function onPlace(player: Player, id: any, x: any, z: any, r: any)
 	if not def then
 		return { ok = false, err = err }
 	end
-	if typeof(x) ~= "number" or typeof(z) ~= "number" then
+	if not finite(x) or not finite(z) then
 		return { ok = false, err = "Invalid position" }
 	end
-	local ok, perr, b = placeInternal(n, def, math.floor(x), math.floor(z), validRotation(r), true)
+	local len = isSegment(def) and def.size[2] * Config.CellSize or nil
+	local ok, perr, b = placeInternal(n, def, cleanPos(x), cleanPos(z), cleanAngle(a), len, true)
 	if not ok or not b then
 		return { ok = false, err = perr }
 	end
-	pushUndo(n, { kind = "place", uid = b.uid, cost = def.cost })
+	pushUndo(n, { kind = "place", uid = b.uid })
 	S.StateService.push(n)
 	return { ok = true, uid = b.uid }
 end
 
-local function onPlaceMany(player: Player, id: any, cells: any, r: any)
+-- A row of the same building (drag tool): spots = { {x, z}, ... }.
+local function onPlaceMany(player: Player, id: any, spots: any, a: any)
 	local n = nationOf(player)
 	if not n then
 		return { ok = false, err = "Loading..." }
@@ -488,18 +552,20 @@ local function onPlaceMany(player: Player, id: any, cells: any, r: any)
 	if not def then
 		return { ok = false, err = err }
 	end
-	if typeof(cells) ~= "table" then
+	if typeof(spots) ~= "table" then
 		return { ok = false, err = "Invalid request" }
 	end
+	local angle = cleanAngle(a)
+	local len = isSegment(def) and def.size[2] * Config.CellSize or nil
 	local placed = 0
 	local lastErr: string? = nil
 	local uids = {}
-	for i, cell in cells do
-		if i > 250 then
+	for i, spot in spots do
+		if i > 120 then
 			break
 		end
-		if typeof(cell) == "table" and typeof(cell[1]) == "number" and typeof(cell[2]) == "number" then
-			local ok, perr, b = placeInternal(n, def, math.floor(cell[1]), math.floor(cell[2]), validRotation(r), true)
+		if typeof(spot) == "table" and finite(spot[1]) and finite(spot[2]) then
+			local ok, perr, b = placeInternal(n, def, cleanPos(spot[1]), cleanPos(spot[2]), angle, len, true)
 			if ok and b then
 				placed += 1
 				table.insert(uids, b.uid)
@@ -512,20 +578,52 @@ local function onPlaceMany(player: Player, id: any, cells: any, r: any)
 		end
 	end
 	if placed > 0 then
-		pushUndo(n, { kind = "placeMany", uids = uids, cost = def.cost })
+		pushUndo(n, { kind = "placeMany", uids = uids })
 		BuildService.recomputeRoads(n)
 		S.StateService.push(n)
 	end
 	return { ok = placed > 0, placed = placed, err = placed == 0 and lastErr or nil }
 end
 
+-- Draw a road from A to B (island-local studs), any length and direction.
+local function onPlaceRoad(player: Player, id: any, ax: any, az: any, bx: any, bz: any)
+	local n = nationOf(player)
+	if not n then
+		return { ok = false, err = "Loading..." }
+	end
+	local def, err = requireDef(n, id)
+	if not def then
+		return { ok = false, err = err }
+	end
+	if not isSegment(def) then
+		return { ok = false, err = "Only roads can be drawn" }
+	end
+	if not (finite(ax) and finite(az) and finite(bx) and finite(bz)) then
+		return { ok = false, err = "Invalid position" }
+	end
+	local x, z, angle, len = Footprint.segment(ax, az, bx, bz)
+	if len < 2 then
+		return { ok = false, err = "Drag further to draw a road" }
+	end
+	if len > Config.RoadMaxLength then
+		return { ok = false, err = ("Roads are drawn in pieces up to %d studs"):format(Config.RoadMaxLength) }
+	end
+	local ok, perr, b = placeInternal(n, def, cleanPos(x), cleanPos(z), cleanAngle(angle), math.floor(len * 10 + 0.5) / 10, true)
+	if not ok or not b then
+		return { ok = false, err = perr }
+	end
+	pushUndo(n, { kind = "place", uid = b.uid })
+	S.StateService.push(n)
+	return { ok = true, uid = b.uid, cost = b.cost }
+end
+
 local function refundFor(b: BRuntime): number
 	if b.finishAt then
-		return b.def.cost
+		return b.cost
 	elseif b.damaged then
-		return math.floor(b.def.cost * Config.SellRefund * 0.5)
+		return math.floor(b.cost * Config.SellRefund * 0.5)
 	end
-	return math.floor(b.def.cost * Config.SellRefund)
+	return math.floor(b.cost * Config.SellRefund)
 end
 
 local function onDelete(player: Player, uid: any)
@@ -539,36 +637,41 @@ local function onDelete(player: Player, uid: any)
 	end
 	local refund = refundFor(b)
 	n.data.Cash += refund
-	pushUndo(n, { kind = "delete", id = b.id, x = b.x, z = b.z, r = b.r, refund = refund, wasBuilt = b.finishAt == nil })
+	pushUndo(n, { kind = "delete", id = b.id, x = b.x, z = b.z, r = b.r, len = b.len, refund = refund, wasBuilt = b.finishAt == nil })
 	removeInternal(n, b)
 	S.StateService.push(n)
 	return { ok = true, refund = refund }
 end
 
-local function onMove(player: Player, uid: any, x: any, z: any, r: any)
+local function relocate(n: Nation, b: BRuntime, x: number, z: number, r: number)
+	unindex(n, b)
+	b.x, b.z, b.r = x, z, r
+	insert(n, b)
+	if b.model then
+		b.model:PivotTo(BuildService.worldCFrame(n, b))
+		b.model:SetAttribute("PX", b.x)
+		b.model:SetAttribute("PZ", b.z)
+		b.model:SetAttribute("Angle", b.r)
+	end
+	BuildService.recomputeRoads(n)
+end
+
+local function onMove(player: Player, uid: any, x: any, z: any, a: any)
 	local n = nationOf(player)
-	if not n or typeof(uid) ~= "number" or typeof(x) ~= "number" or typeof(z) ~= "number" then
+	if not n or typeof(uid) ~= "number" or not finite(x) or not finite(z) then
 		return { ok = false, err = "Invalid request" }
 	end
 	local b = n.buildings[uid]
 	if not b then
 		return { ok = false, err = "Building not found" }
 	end
-	local nx, nz, nr = math.floor(x), math.floor(z), validRotation(r)
-	local ok, err = BuildService.canPlace(n, b.def, nx, nz, nr, b.uid)
+	local nx, nz, nr = cleanPos(x), cleanPos(z), cleanAngle(a)
+	local ok, err = BuildService.canPlace(n, b.def, nx, nz, nr, b.len, b.uid)
 	if not ok then
 		return { ok = false, err = err }
 	end
 	pushUndo(n, { kind = "move", uid = b.uid, x = b.x, z = b.z, r = b.r })
-	unindex(n, b)
-	b.x, b.z, b.r = nx, nz, nr
-	for _, key in cellsOf(b.def, b.x, b.z, b.r) do
-		n.grid[key] = b.uid
-	end
-	if b.model then
-		b.model:PivotTo(BuildService.worldCFrame(n, b))
-	end
-	BuildService.recomputeRoads(n)
+	relocate(n, b, nx, nz, nr)
 	return { ok = true }
 end
 
@@ -590,7 +693,7 @@ local function onUndo(player: Player)
 		for _, uid in uids do
 			local b = n.buildings[uid]
 			if b then
-				n.data.Cash += b.def.cost
+				n.data.Cash += b.cost
 				removeInternal(n, b)
 			end
 		end
@@ -600,7 +703,7 @@ local function onUndo(player: Player)
 			if n.data.Cash < action.refund then
 				return { ok = false, err = "Not enough cash" }
 			end
-			local ok, err, b = placeInternal(n, def, action.x, action.z, action.r, false)
+			local ok, err, b = placeInternal(n, def, action.x, action.z, action.r, action.len, false)
 			if not ok or not b then
 				return { ok = false, err = err }
 			end
@@ -612,16 +715,8 @@ local function onUndo(player: Player)
 		end
 	elseif action.kind == "move" then
 		local b = n.buildings[action.uid]
-		if b and BuildService.canPlace(n, b.def, action.x, action.z, action.r, b.uid) then
-			unindex(n, b)
-			b.x, b.z, b.r = action.x, action.z, action.r
-			for _, key in cellsOf(b.def, b.x, b.z, b.r) do
-				n.grid[key] = b.uid
-			end
-			if b.model then
-				b.model:PivotTo(BuildService.worldCFrame(n, b))
-			end
-			BuildService.recomputeRoads(n)
+		if b and BuildService.canPlace(n, b.def, action.x, action.z, action.r, b.len, b.uid) then
+			relocate(n, b, action.x, action.z, action.r)
 		end
 	end
 	S.StateService.push(n)
@@ -637,7 +732,7 @@ local function onRepair(player: Player, uid: any)
 	if not b or not b.damaged then
 		return { ok = false, err = "Nothing to repair" }
 	end
-	local price = math.floor(b.def.cost * Config.RepairCostRate)
+	local price = math.floor(b.cost * Config.RepairCostRate)
 	if n.data.Cash < price then
 		return { ok = false, err = "Not enough cash" }
 	end
@@ -690,6 +785,7 @@ end
 function BuildService.start()
 	Net.handle("PlaceBuilding", onPlace, 12)
 	Net.handle("PlaceMany", onPlaceMany, 4)
+	Net.handle("PlaceRoad", onPlaceRoad, 12)
 	Net.handle("DeleteBuilding", onDelete, 12)
 	Net.handle("MoveBuilding", onMove, 8)
 	Net.handle("Undo", onUndo, 6)

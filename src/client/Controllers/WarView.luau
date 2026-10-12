@@ -1,9 +1,11 @@
 --[[
 	WarView
-	"Travel" opens the strategic view: a top-down camera over the mainland or
-	any nation. From here you:
+	"Travel" opens the strategic view: a top-down camera over the central
+	battlefield (every nation's island rings it, joined by a bridge) or any
+	nation. From here you:
 	  * pick a weapon in the hotbar (1-7) and click to launch at the reticle
-	  * drag a box (or tap) to select your vehicles, right-click / tap to move
+	  * drag a box (or tap) to select your vehicles, right-click / tap to move;
+	    they drive over the bridges, and into a rival city with PvP on
 	  * watch strategic points ("AIRPORT · UNCAPTURED") and enemy nations
 	WASD / arrows pan, scroll / pinch zoom, the hammer button returns home.
 ]]
@@ -241,7 +243,7 @@ function WarView.refreshHint()
 		hint.Text = ("ARMED: %s  ·  LMB LAUNCH  ·  RMB CANCEL"):format(string.upper(w and w.name or selectedWeapon))
 		hint.TextColor3 = C.Accent
 	elseif UnitView.count() > 0 then
-		hint.Text = ("%d VEHICLES SELECTED  ·  RMB / TAP GROUND TO MOVE  ·  ESC CLEAR"):format(UnitView.count())
+		hint.Text = ("%d VEHICLES SELECTED  ·  RMB / TAP TO DRIVE THERE  ·  A RIVAL CITY TO INVADE (PVP)  ·  ESC CLEAR"):format(UnitView.count())
 		hint.TextColor3 = C.Teal
 	else
 		hint.Text = "WASD PAN  ·  SCROLL ZOOM  ·  1-7 WEAPONS  ·  DRAG TO SELECT VEHICLES"
@@ -410,7 +412,7 @@ local function describeTarget(hit: Vector3): string
 		end
 	end
 	for i = 1, Config.MaxPlots do
-		if Grid.insidePlot(Grid.plotOrigin(i), hit) then
+		if Grid.insidePlot(i, hit) then
 			for _, p in Players:GetPlayers() do
 				if p:GetAttribute("PlotIndex") == i then
 					return string.upper((p:GetAttribute("NationName") :: string?) or p.DisplayName) .. (p == player and "  ·  OWN TERRITORY" or "")
@@ -442,7 +444,8 @@ local function updateCamera(dt: number)
 	if move.Magnitude > 0 then
 		focus += move.Unit * height * 1.3 * dt
 	end
-	focus = Vector3.new(math.clamp(focus.X, -2600, 2600), 0, math.clamp(focus.Z, -800, 4600))
+	local o = Config.MainlandOrigin
+	focus = Vector3.new(math.clamp(focus.X, o.X - 2100, o.X + 2100), 0, math.clamp(focus.Z, o.Z - 2100, o.Z + 2100))
 	local target = CFrame.lookAt(focus + Vector3.new(0, height, height * 0.22), focus)
 	camera.CFrame = camera.CFrame:Lerp(target, math.min(1, dt * 10))
 
@@ -464,7 +467,7 @@ function WarView.go(target: string | number)
 	Hub.call("closeBuild")
 	if target == "mainland" then
 		focus = Config.MainlandOrigin
-		height = 900
+		height = 1500
 	elseif type(target) == "number" then
 		focus = Grid.plotOrigin(target)
 		height = 520
@@ -476,7 +479,7 @@ function WarView.go(target: string | number)
 		camera.CFrame = CFrame.lookAt(focus + Vector3.new(0, height, height * 0.22), focus)
 	end
 	if target == "mainland" then
-		readout.theater.Text = "MAINLAND"
+		readout.theater.Text = "CENTRAL FRONT"
 	elseif type(target) == "number" then
 		local name = "UNCLAIMED LAND"
 		for _, p in Players:GetPlayers() do
@@ -561,11 +564,11 @@ function WarView.openTravel()
 	end
 	local deployed = 0
 	for _, m in UnitView.mine() do
-		if m:GetAttribute("Location") == "mainland" then
+		if (m:GetAttribute("Location") or "home") ~= "home" then
 			deployed += 1
 		end
 	end
-	local war = theater("Mainland", 1, 170, "Mainland", "Contested continent. Capture airports, oil fields and ports for permanent bonuses.", C.Bad, function()
+	local war = theater("Mainland", 1, 170, "Central front", "The battlefield every nation's bridge leads to. Capture points for permanent bonuses.", C.Bad, function()
 		WarView.go("mainland")
 	end)
 	Lib.hazard({ AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 3, 1, 0), Size = UDim2.new(1, -3, 0, 5), Parent = war }, C.Bad, C.Raised, 9)
@@ -633,7 +636,7 @@ function WarView.openTravel()
 	if count == 0 then
 		Lib.text({
 			Name = "Empty",
-			Text = "No other nations on this server yet. The mainland is still yours to take.",
+			Text = "No other nations on this server yet. The central front is still yours to take.",
 			TextWrapped = true,
 			TextColor3 = C.Muted,
 			Size = UDim2.new(1, -8, 0, 40),
@@ -758,7 +761,7 @@ local function onInputChanged(input: InputObject)
 			selectBox.Size = UDim2.fromOffset(size.X, size.Y)
 		end
 	elseif input.UserInputType == Enum.UserInputType.MouseWheel and ClientState.mode == "war" then
-		height = math.clamp(height * (1 - input.Position.Z * 0.12), 120, 1800)
+		height = math.clamp(height * (1 - input.Position.Z * 0.12), 120, 2800)
 	end
 end
 
@@ -827,7 +830,7 @@ function WarView.init(screen: GuiObject)
 		Parent = warOverlay,
 	}, { Lib.pad(10, 14) })
 	Lib.caption("Theater", { TextColor3 = C.Accent, Parent = panel })
-	readout.theater = Lib.display({ Name = "Name", Text = "MAINLAND", TextSize = 20, Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 24), Parent = panel })
+	readout.theater = Lib.display({ Name = "Name", Text = "CENTRAL FRONT", TextSize = 20, Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 24), Parent = panel })
 	readout.grid = Lib.text({ Name = "Grid", Text = "", FontFace = Theme.Font.Mono, TextSize = 12, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 44), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
 	readout.sel = Lib.display({ Name = "Selected", Text = "0 SELECTED", TextSize = 12, TextColor3 = C.Teal, Position = UDim2.fromOffset(0, 64), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
 
@@ -914,7 +917,7 @@ function WarView.init(screen: GuiObject)
 	UserInputService.InputEnded:Connect(onInputEnded)
 	UserInputService.TouchPinch:Connect(function(_positions, scale, _velocity, state)
 		if ClientState.mode == "war" and state == Enum.UserInputState.Change then
-			height = math.clamp(height / math.max(0.5, scale ^ 0.05), 120, 1800)
+			height = math.clamp(height / math.max(0.5, scale ^ 0.05), 120, 2800)
 		end
 	end)
 	UserInputService.TouchPan:Connect(function(_positions, _translation, velocity, state)

@@ -19,16 +19,18 @@ Config.StudioFreePurchases = true
 Config.GroupId = 0
 
 ---------------------------------------------------------------------------
--- World / grid
+-- World layout
+-- The central battlefield (the "mainland") sits in the middle of the map.
+-- Every nation's island sits on a ring around it, facing the centre, and
+-- is joined to it by its own bridge.
 ---------------------------------------------------------------------------
-Config.CellSize = 4 -- studs per grid cell
-Config.PlotCells = 100 -- plot is PlotCells x PlotCells cells (400 x 400 studs)
-Config.PlotGap = 140 -- sand + sea between plots
+Config.CellSize = 4 -- studs per cell: catalog footprints + the optional GRID snap
+Config.PlotSize = 480 -- studs; each island's free-build area (square)
 Config.MaxPlots = 8
-Config.PlotRowLength = 4
-Config.HomelandOrigin = Vector3.new(0, 0, 0)
-Config.MainlandOrigin = Vector3.new(0, 0, 3200)
-Config.MainlandSize = 2400
+Config.MainlandOrigin = Vector3.new(0, 0, 0)
+Config.MainlandRadius = 1000 -- round continent (sand edge)
+Config.PlotRingRadius = 1440 -- island centres from the middle
+Config.BridgeWidth = 30
 
 ---------------------------------------------------------------------------
 -- Economy
@@ -54,6 +56,8 @@ Config.TruckCapacity = 250
 Config.TruckSpeed = 28 -- studs per second
 Config.UndoWindow = 45 -- seconds an action can be undone for a full refund
 Config.MaxQueuePerFactory = 5
+Config.MaxBuildings = 900 -- per nation (road segments included)
+Config.RoadMaxLength = 240 -- longest single road segment, studs
 
 ---------------------------------------------------------------------------
 -- Combat
@@ -70,6 +74,8 @@ Config.CaptureRadius = 70
 Config.CaptureTime = 100 -- capture points needed (units add their capture power per second)
 Config.GarrisonRegen = 4 -- garrison HP regenerated per second
 Config.MaxUnitsPerPlayer = 40
+Config.UnitSpeedScale = 1.6 -- vehicles drive the catalog speed x this
+Config.RaidBuildingDamage = 1.5 -- vehicle dps multiplier against buildings
 
 -- Colour used for each plot slot's nation on the war map.
 Config.NationColors = {

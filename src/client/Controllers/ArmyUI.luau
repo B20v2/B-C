@@ -1,7 +1,7 @@
 --[[
 	ArmyUI
 	Your forces: unit-type cards with 3D previews, roles, stats and how many
-	are at home vs. on the mainland, plus DEPLOY ALL / RECALL ALL / COMMAND.
+	are at home vs. out at the front, plus DEPLOY ALL / RECALL ALL / COMMAND.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -37,7 +37,7 @@ local ROLE_COLORS = {
 }
 
 function ArmyUI.open()
-	local win = Modal.open("Army Command", "Build vehicles in Military Factories · deploy them to the mainland", 980, 620)
+	local win = Modal.open("Army Command", "Build vehicles in Military Factories · they drive over your bridge to the front", 980, 620)
 	local ic = Icons.tank(36, Color3.fromRGB(170, 200, 130))
 	ic.Position = UDim2.fromOffset(8, 6)
 	ic.Parent = win.iconHolder
@@ -48,7 +48,7 @@ function ArmyUI.open()
 	for _, m in mine do
 		local id = m:GetAttribute("UnitId") :: string
 		byType[id] = byType[id] or { home = 0, mainland = 0 }
-		if m:GetAttribute("Location") == "mainland" then
+		if (m:GetAttribute("Location") or "home") ~= "home" then
 			byType[id].mainland += 1
 			deployed += 1
 		else
@@ -63,7 +63,7 @@ function ArmyUI.open()
 		Lib.display({ Text = value, TextSize = 22, TextColor3 = color, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 0, 26), Parent = card })
 	end
 	stat("Vehicles", ("%d / %d"):format(ClientState.get("units") or #mine, ClientState.get("unitCap") or 10), C.Text, 1)
-	stat("On the mainland", tostring(deployed), C.Military, 2)
+	stat("Out at the front", tostring(deployed), C.Military, 2)
 	local function action(name: string, text: string, variant: string, order: number, fn: () -> ())
 		Lib.button({ Name = name, Variant = variant, Text = text, TextSize = 13, Size = UDim2.fromOffset(150, 44), LayoutOrder = order, Parent = top, Activated = fn })
 	end
@@ -89,7 +89,7 @@ function ArmyUI.open()
 		Modal.close()
 		Hub.call("goWar", "mainland")
 		for _, m in UnitView.mine() do
-			if m:GetAttribute("Location") == "mainland" then
+			if (m:GetAttribute("Location") or "home") ~= "home" then
 				UnitView.select(m, true)
 			end
 		end
