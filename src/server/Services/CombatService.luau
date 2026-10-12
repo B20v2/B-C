@@ -152,6 +152,7 @@ local function impact(attacker: Nation, weapon, target: Vector3, defender: Natio
 			dealtTotal += weapon.damage
 			S.UnitService.damage(u, weapon.damage * falloff(flatDist(u.root.CFrame.Position, target)), attacker)
 		end
+		S.FobService.damageNear(target, weapon.radius, weapon.damage * 2, attacker)
 		local point = S.ConquestService.pointNear(target, weapon.radius)
 		if point then
 			-- warheads are very effective against garrisons

@@ -43,8 +43,11 @@ export type BuildingDef = {
 	rpOut: number?,
 	refine: Refine?,
 	fuelCap: number?,
-	factory: { speed: number }?,
-	storage: { oil: number?, steel: number? }?,
+	factory: { speed: number, makes: { string } }?, -- makes: "weapon" | "vehicle" | "infantry" | "air"
+	storage: { oil: number?, steel: number?, food: number? }?,
+	farm: boolean?, -- a field you plant and harvest
+	farmBoost: number?, -- fields within FarmBoostRange grow this much faster
+	helipad: boolean?, -- airlift terminal at home
 	airDefense: AirDefense?,
 	launcher: string?,
 	reload: number?,
@@ -57,7 +60,7 @@ export type BuildingDef = {
 local Buildings = {}
 
 Buildings.Categories = {
-	{ id = "Civilian", tabs = { "Housing", "Roads", "Utilities", "Industry", "Services" } },
+	{ id = "Civilian", tabs = { "Housing", "Roads", "Utilities", "Industry", "Farms", "Services" } },
 	{ id = "Military", tabs = { "Research", "Buildings", "Air Defense", "Missiles", "Drones" } },
 }
 
@@ -173,6 +176,22 @@ B({ id = "light_factory", name = "Consumer Factory", category = "Civilian", tab 
 	income = 1800, workers = 50, power = 10, pollution = 2, hp = 220, desc = "Makes goods. Earns $1,800 per pay." })
 
 ---------------------------------------------------------------------------
+-- CIVILIAN / Farms
+---------------------------------------------------------------------------
+B({ id = "farm_field", name = "Farm Field", category = "Civilian", tab = "Farms",
+	cost = 800, buildTime = 4, size = { 8, 8 }, model = "farmField", farm = true, workers = 2, needsRoad = false,
+	desc = "Plant wheat, potatoes, corn or sunflowers, watch them grow, then harvest them for food. Walk up and press E, or use the panel." })
+B({ id = "farmhouse", name = "Farmhouse", category = "Civilian", tab = "Farms",
+	cost = 2200, buildTime = 6, size = { 4, 4 }, model = "farmhouse", housing = 14, power = 1, water = 1,
+	farmBoost = 0.15, needsRoad = false, desc = "Home for 14 farmers. Nearby fields grow 15% faster." })
+B({ id = "barn", name = "Barn", category = "Civilian", tab = "Farms",
+	cost = 6000, buildTime = 10, size = { 6, 5 }, model = "barn", storage = { food = 2500 }, farmBoost = 0.25,
+	workers = 4, needsRoad = false, desc = "Stores +2,500 food. Nearby fields grow 25% faster." })
+B({ id = "grain_silo", name = "Grain Silo", category = "Civilian", tab = "Farms",
+	cost = 4000, buildTime = 8, size = { 3, 3 }, model = "silo", storage = { food = 1500 }, needsRoad = false,
+	desc = "Stores +1,500 food." })
+
+---------------------------------------------------------------------------
 -- CIVILIAN / Services
 ---------------------------------------------------------------------------
 B({ id = "shop", name = "Corner Shop", category = "Civilian", tab = "Services",
@@ -215,11 +234,19 @@ B({ id = "military_academy", name = "Military Research Center", category = "Mili
 ---------------------------------------------------------------------------
 B({ id = "small_military_factory", name = "Small Military Factory", category = "Military", tab = "Buildings",
 	cost = 25000, buildTime = 25, size = { 8, 8 }, model = "factory", params = { tint = "military" },
-	fuelCap = 500, factory = { speed = 1 }, workers = 60, power = 15, pollution = 3, hp = 260,
+	fuelCap = 500, factory = { speed = 1, makes = { "weapon", "vehicle" } }, workers = 60, power = 15, pollution = 3, hp = 260,
 	research = "military_doctrine", desc = "Builds missiles, drones and vehicles. Needs fuel deliveries." })
+B({ id = "barracks", name = "Barracks", category = "Military", tab = "Buildings",
+	cost = 12000, buildTime = 15, size = { 10, 6 }, model = "barracks", factory = { speed = 1, makes = { "infantry" } },
+	workers = 20, power = 4, water = 3, hp = 240, research = "military_doctrine",
+	desc = "Trains infantry squads. Soldiers march out of the front gate." })
+B({ id = "helipad", name = "Helipad", category = "Military", tab = "Buildings",
+	cost = 30000, buildTime = 25, size = { 10, 10 }, model = "helipad", factory = { speed = 1, makes = { "air" } },
+	fuelCap = 600, helipad = true, workers = 25, power = 8, hp = 260, research = "aviation", needsRoad = false,
+	desc = "Builds and refuels helicopters, and is the home end of airlifts to your FOB. Needs fuel deliveries." })
 B({ id = "large_military_factory", name = "Large Military Factory", category = "Military", tab = "Buildings",
 	cost = 80000, buildTime = 45, size = { 14, 10 }, model = "factory", params = { tint = "military", large = true },
-	fuelCap = 1000, factory = { speed = 2 }, workers = 150, power = 35, pollution = 5, hp = 450,
+	fuelCap = 1000, factory = { speed = 2, makes = { "weapon", "vehicle" } }, workers = 150, power = 35, pollution = 5, hp = 450,
 	research = "mechanized", desc = "Builds twice as fast. Needs fuel deliveries." })
 B({ id = "vehicle_depot", name = "Vehicle Depot", category = "Military", tab = "Buildings",
 	cost = 15000, buildTime = 15, size = { 8, 6 }, model = "depot", depot = 10, research = "mechanized",

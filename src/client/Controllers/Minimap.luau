@@ -123,6 +123,20 @@ local function redraw()
 				bridge.Rotation = -math.deg(Grid.plotAngle(i))
 			end
 		end
+		local fobs = workspace:FindFirstChild("Mainland") and workspace.Mainland:FindFirstChild("Fobs")
+		if fobs then
+			for _, f in fobs:GetChildren() do
+				local base = f:IsA("Model") and f.PrimaryPart
+				if base then
+					local v = project(base.CFrame.Position, center, scale)
+					if v then
+						local mine = f:GetAttribute("OwnerId") == player.UserId
+						local sq = dot(v, 7, mine and C.Teal or C.Bad)
+						sq.BackgroundTransparency = 0.1
+					end
+				end
+			end
+		end
 		local points = workspace:FindFirstChild("Mainland") and workspace.Mainland:FindFirstChild("Points")
 		if points then
 			for _, p in points:GetChildren() do

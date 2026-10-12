@@ -53,7 +53,7 @@ R({ id = "nuclear", name = "Nuclear Fission", branch = "Civil", col = 3, row = 3
 
 -- Military branch
 R({ id = "military_doctrine", name = "Military Doctrine", branch = "Military", col = 1, row = 2, rp = 100,
-	cash = 30000, time = 45, desc = "Small military factory, research center." })
+	cash = 30000, time = 45, desc = "Small military factory, barracks, rifle squads, Humvees, research center." })
 R({ id = "ballistics", name = "Ballistics", branch = "Military", col = 2, row = 1, rp = 150, cash = 40000,
 	time = 60, requires = { "military_doctrine" }, desc = "SRBM launcher and missiles." })
 R({ id = "air_defense_1", name = "Air Defense I", branch = "Military", col = 2, row = 2, rp = 120, cash = 30000,
@@ -62,13 +62,15 @@ R({ id = "drones_1", name = "Drone Warfare", branch = "Military", col = 2, row =
 	time = 60, requires = { "military_doctrine" }, desc = "Hornet drones and racks." })
 R({ id = "mechanized", name = "Mechanized Forces", branch = "Military", col = 2, row = 4, rp = 250,
 	cash = 70000, time = 90, requires = { "military_doctrine", "heavy_industry" },
-	desc = "Large factory, vehicle depot, trucks and IFVs." })
+	desc = "Large factory, vehicle depot, logistics trucks, IFVs, anti-tank teams and FOBs." })
 R({ id = "cruise_missiles", name = "Cruise Missiles", branch = "Military", col = 3, row = 1, rp = 300,
 	cash = 90000, time = 90, requires = { "ballistics" }, hits = 5, desc = "GLCM launcher and missiles." })
 R({ id = "air_defense_2", name = "Air Defense II", branch = "Military", col = 3, row = 2, rp = 300, cash = 80000,
 	time = 90, requires = { "air_defense_1" }, desc = "SAM sites, radar, mobile anti-air." })
 R({ id = "drones_2", name = "Jet Drones", branch = "Military", col = 3, row = 3, rp = 350, cash = 100000,
 	time = 100, requires = { "drones_1" }, hits = 5, desc = "Raptor jet drones." })
+R({ id = "aviation", name = "Army Aviation", branch = "Military", col = 4, row = 3, rp = 400, cash = 120000,
+	time = 110, requires = { "mechanized" }, desc = "Helipad, Black Hawk and Chinook helicopters, airlifts to your FOB." })
 R({ id = "armor", name = "Armored Warfare", branch = "Military", col = 3, row = 4, rp = 450, cash = 130000,
 	time = 120, requires = { "mechanized" }, desc = "Main battle tanks." })
 R({ id = "mrbm", name = "Medium-Range Missiles", branch = "Military", col = 4, row = 1, rp = 700, cash = 220000,

@@ -4,6 +4,7 @@
 	  * wind turbine rotors and radar dishes spin, pump jacks rock
 	  * construction progress bars over buildings being built
 	  * fuel trucks drive refinery -> factory -> refinery along the grid
+	  * soldiers' legs swing while they march, helicopter rotors spin
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -29,6 +30,53 @@ type Spinner = { sub: Model, base: CFrame, speed: number, axis: string, rock: nu
 local spinners: { [Model]: Spinner } = {}
 local bars: { [Model]: { gui: BillboardGui, bar: Lib.Progress, label: TextLabel } } = {}
 local trucks: { [string]: Model } = {}
+
+-- Unit rigs: Motor6D hips (Swing = +-1) and rotor joints (Spin = rad/s).
+type Rig = { hips: { Motor6D }, rotors: { Motor6D }, phase: number }
+local rigs: { [Model]: Rig } = {}
+
+function Animator.registerRig(m: Instance)
+	if not m:IsA("Model") then
+		return
+	end
+	local hips, rotors = {}, {}
+	for _, d in m:GetDescendants() do
+		if d:IsA("Motor6D") then
+			if d:GetAttribute("Swing") then
+				table.insert(hips, d)
+			elseif d:GetAttribute("Spin") then
+				table.insert(rotors, d)
+			end
+		end
+	end
+	if #hips > 0 or #rotors > 0 then
+		rigs[m] = { hips = hips, rotors = rotors, phase = math.random() * 6 }
+	end
+end
+
+-- Returns how many joints were posed this frame.
+function Animator.animateRigs(t: number): number
+	local camPos = camera.CFrame.Position
+	local posed = 0
+	for m, r in rigs do
+		local root = m.PrimaryPart
+		if root and (root.CFrame.Position - camPos).Magnitude < CULL * 1.6 then
+			local moving = m:GetAttribute("Moving") == true
+			for _, hip in r.hips do
+				local swing = (hip:GetAttribute("Swing") :: number?) or 1
+				hip.Transform = moving and CFrame.Angles(math.sin(t * 9 + r.phase) * 0.7 * swing, 0, 0) or CFrame.new()
+				posed += 1
+			end
+			local rate = moving and 1 or 0.45
+			for _, rotor in r.rotors do
+				local spin = (rotor:GetAttribute("Spin") :: number?) or 10
+				rotor.Transform = CFrame.Angles(0, (t + r.phase) * spin * rate % (math.pi * 2), 0)
+				posed += 1
+			end
+		end
+	end
+	return posed
+end
 local refineries: { [Model]: boolean } = {}
 
 local function axisAngles(axis: string, angle: number): CFrame
@@ -236,9 +284,22 @@ local function step()
 		end
 	end
 	updateTrucks(now)
+	Animator.animateRigs(t)
 end
 
 function Animator.init()
+	task.spawn(function()
+		local units = workspace:WaitForChild("Units")
+		units.ChildAdded:Connect(function(m)
+			task.defer(Animator.registerRig, m)
+		end)
+		units.ChildRemoved:Connect(function(m)
+			rigs[m :: Model] = nil
+		end)
+		for _, m in units:GetChildren() do
+			Animator.registerRig(m)
+		end
+	end)
 	task.spawn(function()
 		local homeland = workspace:WaitForChild("Homeland")
 		homeland.ChildAdded:Connect(function(c)

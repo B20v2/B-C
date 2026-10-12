@@ -104,6 +104,7 @@ function EconomyService.compute(n: Nation, dt: number)
 	local services = { Leisure = 0, Commerce = 0, Education = 0, Health = 0 }
 	local pollution, upkeep, damaged, constructing = 0, 0, 0, 0
 	local oilCap, steelCap = Config.BaseResourceCap, Config.BaseResourceCap
+	local foodCap = Config.FoodBaseCap
 	local depotCap = 0
 
 	for _, b in n.buildings do
@@ -157,6 +158,7 @@ function EconomyService.compute(n: Nation, dt: number)
 			if def.storage then
 				oilCap += def.storage.oil or 0
 				steelCap += def.storage.steel or 0
+				foodCap += def.storage.food or 0
 			end
 			if def.depot then
 				depotCap += def.depot
@@ -189,6 +191,9 @@ function EconomyService.compute(n: Nation, dt: number)
 	happiness -= math.min(25, pollution * 0.6)
 	happiness -= (1 - pr) * 20 + (1 - wtr) * 20
 	happiness -= math.min(15, damaged * 2)
+	if n.stats.fed then
+		happiness += Config.WellFedHappiness
+	end
 	if pop < 150 then
 		happiness += 10 -- small towns are forgiving so new players grow fast
 	end
@@ -226,6 +231,8 @@ function EconomyService.compute(n: Nation, dt: number)
 	st.happiness = happiness
 	st.oilRate, st.steelRate, st.rpRate = oilRate, steelRate, rpRate
 	st.oilCap, st.steelCap = oilCap, steelCap
+	st.foodCap = foodCap
+	data.Food = math.min(data.Food, foodCap)
 	st.taxes, st.commerce, st.upkeep = taxes, commerce, upkeep
 	st.gross, st.income, st.mult = gross, net, mult
 	st.depotCap = depotCap
@@ -234,6 +241,7 @@ function EconomyService.compute(n: Nation, dt: number)
 end
 
 function EconomyService.payDay(n: Nation)
+	S.FarmService.payDay(n)
 	local net = math.floor(n.stats.income or 0)
 	local data = n.data
 	data.Cash = math.max(0, data.Cash + net)
@@ -262,6 +270,7 @@ local function tick(dt: number)
 				S.LogisticsService.tick(n, dt, now)
 				S.ProductionService.tick(n, dt, now)
 				S.ResearchService.tick(n, now)
+				S.FarmService.tick(n, dt)
 				S.RewardService.tick(n, now)
 				S.NationService.tick(n, now)
 				if now >= n.nextPayAt then

@@ -181,6 +181,9 @@ local function spawnModel(n: Nation, b: BRuntime)
 	model.Parent = n.folder
 	b.model = model
 	applyBillboard(n, b)
+	if b.def.farm then
+		S.FarmService.attach(n, b)
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -392,6 +395,12 @@ function BuildService.loadNation(n: Nation)
 				b.oil = s.o or 0
 				b.fuel = s.fu or 0
 				b.dest = s.de or 0
+				if def.farm then
+					b.crop = type(s.cr) == "string" and s.cr or nil
+					b.growth = type(s.gr) == "number" and math.clamp(s.gr, 0, 1) or 0
+					b.auto = s.ar == true
+					b.lastCrop = type(s.lc) == "string" and s.lc or nil
+				end
 				if s.q then
 					for _, q in s.q do
 						table.insert(b.queue, { id = q.id, kind = q.k, progress = q.p or 0, started = q.s == true })
@@ -443,6 +452,10 @@ function BuildService.serialize(n: Nation)
 			z = b.z,
 			a = b.r,
 			L = b.len,
+			cr = b.crop,
+			gr = b.crop and math.floor((b.growth or 0) * 1000) / 1000 or nil,
+			ar = b.auto or nil,
+			lc = b.lastCrop,
 			f = b.finishAt,
 			st = b.startAt,
 			d = b.damaged or nil,

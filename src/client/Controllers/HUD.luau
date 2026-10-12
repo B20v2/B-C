@@ -203,6 +203,7 @@ local function buildResources(gui: GuiObject)
 	refs.steel = chip("beam", C.TextSoft, 2)
 	refs.rp = chip("flask", C.Teal, 3)
 	refs.army = chip("tank", Color3.fromRGB(170, 200, 130), 4)
+	refs.food = chip("wheat", Color3.fromRGB(240, 200, 100), 3)
 end
 
 ---------------------------------------------------------------------------
@@ -452,6 +453,8 @@ local function refresh()
 	refs.steel.Text = ("STEEL %s/%s"):format(Format.short(d.steel or 0), Format.short(d.steelCap or 0))
 	refs.rp.Text = ("RP %s  +%s/m"):format(Format.short(d.rp or 0), Format.short(d.rpRate or 0))
 	refs.army.Text = ("ARMY %d/%d"):format(d.units or 0, d.unitCap or 0)
+	refs.food.Text = ("FOOD %s/%s%s"):format(Format.short(d.food or 0), Format.short(d.foodCap or 0), d.fed and "  ·  FED" or "")
+	refs.food.TextColor3 = d.fed and C.Good or C.Text
 
 	local pvpOn = d.pvp == true
 	refs.setPvp(pvpOn)

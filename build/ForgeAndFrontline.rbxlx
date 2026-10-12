@@ -427,8 +427,11 @@ export type BuildingDef = {
 	rpOut: number?,
 	refine: Refine?,
 	fuelCap: number?,
-	factory: { speed: number }?,
-	storage: { oil: number?, steel: number? }?,
+	factory: { speed: number, makes: { string } }?, -- makes: "weapon" | "vehicle" | "infantry" | "air"
+	storage: { oil: number?, steel: number?, food: number? }?,
+	farm: boolean?, -- a field you plant and harvest
+	farmBoost: number?, -- fields within FarmBoostRange grow this much faster
+	helipad: boolean?, -- airlift terminal at home
 	airDefense: AirDefense?,
 	launcher: string?,
 	reload: number?,
@@ -441,7 +444,7 @@ export type BuildingDef = {
 local Buildings = {}
 
 Buildings.Categories = {
-	{ id = "Civilian", tabs = { "Housing", "Roads", "Utilities", "Industry", "Services" } },
+	{ id = "Civilian", tabs = { "Housing", "Roads", "Utilities", "Industry", "Farms", "Services" } },
 	{ id = "Military", tabs = { "Research", "Buildings", "Air Defense", "Missiles", "Drones" } },
 }
 
@@ -557,6 +560,22 @@ B({ id = "light_factory", name = "Consumer Factory", category = "Civilian", tab 
 	income = 1800, workers = 50, power = 10, pollution = 2, hp = 220, desc = "Makes goods. Earns $1,800 per pay." })
 
 ---------------------------------------------------------------------------
+-- CIVILIAN / Farms
+---------------------------------------------------------------------------
+B({ id = "farm_field", name = "Farm Field", category = "Civilian", tab = "Farms",
+	cost = 800, buildTime = 4, size = { 8, 8 }, model = "farmField", farm = true, workers = 2, needsRoad = false,
+	desc = "Plant wheat, potatoes, corn or sunflowers, watch them grow, then harvest them for food. Walk up and press E, or use the panel." })
+B({ id = "farmhouse", name = "Farmhouse", category = "Civilian", tab = "Farms",
+	cost = 2200, buildTime = 6, size = { 4, 4 }, model = "farmhouse", housing = 14, power = 1, water = 1,
+	farmBoost = 0.15, needsRoad = false, desc = "Home for 14 farmers. Nearby fields grow 15% faster." })
+B({ id = "barn", name = "Barn", category = "Civilian", tab = "Farms",
+	cost = 6000, buildTime = 10, size = { 6, 5 }, model = "barn", storage = { food = 2500 }, farmBoost = 0.25,
+	workers = 4, needsRoad = false, desc = "Stores +2,500 food. Nearby fields grow 25% faster." })
+B({ id = "grain_silo", name = "Grain Silo", category = "Civilian", tab = "Farms",
+	cost = 4000, buildTime = 8, size = { 3, 3 }, model = "silo", storage = { food = 1500 }, needsRoad = false,
+	desc = "Stores +1,500 food." })
+
+---------------------------------------------------------------------------
 -- CIVILIAN / Services
 ---------------------------------------------------------------------------
 B({ id = "shop", name = "Corner Shop", category = "Civilian", tab = "Services",
@@ -599,11 +618,19 @@ B({ id = "military_academy", name = "Military Research Center", category = "Mili
 ---------------------------------------------------------------------------
 B({ id = "small_military_factory", name = "Small Military Factory", category = "Military", tab = "Buildings",
 	cost = 25000, buildTime = 25, size = { 8, 8 }, model = "factory", params = { tint = "military" },
-	fuelCap = 500, factory = { speed = 1 }, workers = 60, power = 15, pollution = 3, hp = 260,
+	fuelCap = 500, factory = { speed = 1, makes = { "weapon", "vehicle" } }, workers = 60, power = 15, pollution = 3, hp = 260,
 	research = "military_doctrine", desc = "Builds missiles, drones and vehicles. Needs fuel deliveries." })
+B({ id = "barracks", name = "Barracks", category = "Military", tab = "Buildings",
+	cost = 12000, buildTime = 15, size = { 10, 6 }, model = "barracks", factory = { speed = 1, makes = { "infantry" } },
+	workers = 20, power = 4, water = 3, hp = 240, research = "military_doctrine",
+	desc = "Trains infantry squads. Soldiers march out of the front gate." })
+B({ id = "helipad", name = "Helipad", category = "Military", tab = "Buildings",
+	cost = 30000, buildTime = 25, size = { 10, 10 }, model = "helipad", factory = { speed = 1, makes = { "air" } },
+	fuelCap = 600, helipad = true, workers = 25, power = 8, hp = 260, research = "aviation", needsRoad = false,
+	desc = "Builds and refuels helicopters, and is the home end of airlifts to your FOB. Needs fuel deliveries." })
 B({ id = "large_military_factory", name = "Large Military Factory", category = "Military", tab = "Buildings",
 	cost = 80000, buildTime = 45, size = { 14, 10 }, model = "factory", params = { tint = "military", large = true },
-	fuelCap = 1000, factory = { speed = 2 }, workers = 150, power = 35, pollution = 5, hp = 450,
+	fuelCap = 1000, factory = { speed = 2, makes = { "weapon", "vehicle" } }, workers = 150, power = 35, pollution = 5, hp = 450,
 	research = "mechanized", desc = "Builds twice as fast. Needs fuel deliveries." })
 B({ id = "vehicle_depot", name = "Vehicle Depot", category = "Military", tab = "Buildings",
 	cost = 15000, buildTime = 15, size = { 8, 6 }, model = "depot", depot = 10, research = "mechanized",
@@ -735,6 +762,77 @@ return Buildings
         </Item>
         <Item class="ModuleScript" referent="11">
           <Properties>
+            <string name="Name">Crops</string>
+            <string name="Source"><![CDATA[--[[
+	Crops you can plant in a Farm Field. Seed is paid when planting; the
+	field grows through four stages (ploughed, sprouts, growing, ripe) and
+	is harvested for food. Food feeds your population (well-fed nations are
+	happier), is packed into supplies for your FOB, and overflow is sold.
+]]
+
+export type CropDef = {
+	id: string,
+	name: string,
+	seed: number, -- $ per planting
+	time: number, -- seconds to ripen at 100% efficiency
+	yield: number, -- food per harvest
+	height: number, -- plant height when ripe (studs)
+	green: Color3,
+	ripe: Color3,
+	order: number,
+}
+
+local Crops = {}
+
+local list: { CropDef } = {}
+local byId: { [string]: CropDef } = {}
+
+local function C(def: { [string]: any })
+	def.order = #list + 1
+	local typed = def :: CropDef
+	table.insert(list, typed)
+	byId[typed.id] = typed
+end
+
+local rgb = Color3.fromRGB
+
+C({ id = "wheat", name = "Wheat", seed = 120, time = 60, yield = 90, height = 1.6,
+	green = rgb(118, 164, 70), ripe = rgb(226, 188, 92) })
+C({ id = "potatoes", name = "Potatoes", seed = 150, time = 90, yield = 150, height = 1.1,
+	green = rgb(84, 140, 64), ripe = rgb(98, 132, 58) })
+C({ id = "corn", name = "Corn", seed = 220, time = 120, yield = 220, height = 3.4,
+	green = rgb(88, 150, 60), ripe = rgb(212, 184, 86) })
+C({ id = "sunflowers", name = "Sunflowers", seed = 320, time = 160, yield = 300, height = 3.8,
+	green = rgb(80, 132, 56), ripe = rgb(250, 196, 40) })
+
+function Crops.get(id: string?): CropDef?
+	return id and byId[id] or nil
+end
+
+function Crops.all(): { CropDef }
+	return list
+end
+
+-- Growth stage 0-3 from progress 0-1.
+function Crops.stage(progress: number): number
+	if progress >= 1 then
+		return 3
+	elseif progress >= 0.55 then
+		return 2
+	elseif progress >= 0.2 then
+		return 1
+	end
+	return 0
+end
+
+Crops.StageNames = { [0] = "Ploughed", [1] = "Sprouting", [2] = "Growing", [3] = "Ripe" }
+
+return Crops
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="12">
+          <Properties>
             <string name="Name">Products</string>
             <string name="Source"><![CDATA[--[[
 	Monetization catalog.
@@ -862,7 +960,7 @@ return Products
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="12">
+        <Item class="ModuleScript" referent="13">
           <Properties>
             <string name="Name">Quests</string>
             <string name="Source"><![CDATA[--[[
@@ -877,7 +975,9 @@ return Products
 	  launch     - fire `count` weapons in total
 	  hits       - land `count` hits in total
 	  capture    - capture `count` strategic points in total
-	  units      - own `count` vehicles
+	  units      - own `count` units
+	  harvests   - harvest `count` crops in total
+	  fob        - have `count` FOBs on the battlefield
 ]]
 
 export type QuestDef = {
@@ -896,19 +996,23 @@ local Quests: { QuestDef } = {
 	{ kind = "population", count = 60, reward = 5000, text = "Reach 60 population" },
 	{ kind = "build", target = "shop", count = 1, reward = 5000, text = "Build a Corner Shop" },
 	{ kind = "build", target = "park", count = 1, reward = 5000, text = "Build a Park" },
+	{ kind = "build", target = "farm_field", count = 1, reward = 4000, text = "Build a Farm Field (Farms tab)" },
+	{ kind = "harvests", count = 1, reward = 6000, text = "Plant and harvest a crop - walk up and press E" },
 	{ kind = "build", target = "oil_pump", count = 2, reward = 8000, text = "Build 2 Oil Pumps" },
 	{ kind = "build", target = "small_refinery", count = 1, reward = 10000, text = "Build a Small Refinery" },
 	{ kind = "build", target = "research_lab", count = 1, reward = 10000, text = "Build a Research Lab" },
 	{ kind = "research", target = "military_doctrine", count = 1, reward = 20000, text = "Research Military Doctrine" },
 	{ kind = "build", target = "small_military_factory", count = 1, reward = 25000, text = "Build a Small Military Factory" },
+	{ kind = "build", target = "barracks", count = 1, reward = 20000, text = "Build a Barracks and train a squad" },
 	{ kind = "research", target = "ballistics", count = 1, reward = 25000, text = "Research Ballistics" },
 	{ kind = "build", target = "srbm_launcher", count = 1, reward = 30000, text = "Build an SRBM Launcher" },
 	{ kind = "stock", target = "SRBM", count = 3, reward = 30000, text = "Produce 3 SRBMs" },
 	{ kind = "launch", count = 1, reward = 40000, text = "Travel and launch a missile" },
 	{ kind = "population", count = 1000, reward = 50000, text = "Reach 1,000 population" },
 	{ kind = "hits", count = 5, reward = 60000, text = "Land 5 hits" },
-	{ kind = "units", count = 3, reward = 75000, text = "Build 3 vehicles" },
+	{ kind = "units", count = 3, reward = 75000, text = "Have 3 units (squads, vehicles or helicopters)" },
 	{ kind = "capture", count = 1, reward = 100000, text = "Capture a strategic point" },
+	{ kind = "fob", count = 1, reward = 120000, text = "Set up a FOB on the battlefield" },
 	{ kind = "population", count = 5000, reward = 150000, text = "Reach 5,000 population" },
 	{ kind = "hits", count = 30, reward = 200000, text = "Land 30 hits" },
 	{ kind = "population", count = 15000, reward = 400000, text = "Reach 15,000 population" },
@@ -919,7 +1023,7 @@ return Quests
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="13">
+        <Item class="ModuleScript" referent="14">
           <Properties>
             <string name="Name">Research</string>
             <string name="Source"><![CDATA[--[[
@@ -977,7 +1081,7 @@ R({ id = "nuclear", name = "Nuclear Fission", branch = "Civil", col = 3, row = 3
 
 -- Military branch
 R({ id = "military_doctrine", name = "Military Doctrine", branch = "Military", col = 1, row = 2, rp = 100,
-	cash = 30000, time = 45, desc = "Small military factory, research center." })
+	cash = 30000, time = 45, desc = "Small military factory, barracks, rifle squads, Humvees, research center." })
 R({ id = "ballistics", name = "Ballistics", branch = "Military", col = 2, row = 1, rp = 150, cash = 40000,
 	time = 60, requires = { "military_doctrine" }, desc = "SRBM launcher and missiles." })
 R({ id = "air_defense_1", name = "Air Defense I", branch = "Military", col = 2, row = 2, rp = 120, cash = 30000,
@@ -986,13 +1090,15 @@ R({ id = "drones_1", name = "Drone Warfare", branch = "Military", col = 2, row =
 	time = 60, requires = { "military_doctrine" }, desc = "Hornet drones and racks." })
 R({ id = "mechanized", name = "Mechanized Forces", branch = "Military", col = 2, row = 4, rp = 250,
 	cash = 70000, time = 90, requires = { "military_doctrine", "heavy_industry" },
-	desc = "Large factory, vehicle depot, trucks and IFVs." })
+	desc = "Large factory, vehicle depot, logistics trucks, IFVs, anti-tank teams and FOBs." })
 R({ id = "cruise_missiles", name = "Cruise Missiles", branch = "Military", col = 3, row = 1, rp = 300,
 	cash = 90000, time = 90, requires = { "ballistics" }, hits = 5, desc = "GLCM launcher and missiles." })
 R({ id = "air_defense_2", name = "Air Defense II", branch = "Military", col = 3, row = 2, rp = 300, cash = 80000,
 	time = 90, requires = { "air_defense_1" }, desc = "SAM sites, radar, mobile anti-air." })
 R({ id = "drones_2", name = "Jet Drones", branch = "Military", col = 3, row = 3, rp = 350, cash = 100000,
 	time = 100, requires = { "drones_1" }, hits = 5, desc = "Raptor jet drones." })
+R({ id = "aviation", name = "Army Aviation", branch = "Military", col = 4, row = 3, rp = 400, cash = 120000,
+	time = 110, requires = { "mechanized" }, desc = "Helipad, Black Hawk and Chinook helicopters, airlifts to your FOB." })
 R({ id = "armor", name = "Armored Warfare", branch = "Military", col = 3, row = 4, rp = 450, cash = 130000,
 	time = 120, requires = { "mechanized" }, desc = "Main battle tanks." })
 R({ id = "mrbm", name = "Medium-Range Missiles", branch = "Military", col = 4, row = 1, rp = 700, cash = 220000,
@@ -1020,12 +1126,19 @@ return Research
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="14">
+        <Item class="ModuleScript" referent="15">
           <Properties>
             <string name="Name">Units</string>
             <string name="Source"><![CDATA[--[[
-	Units catalog: ground vehicles built in military factories. Units roll out
-	at home, deploy to the mainland through the tunnel and capture points.
+	Units catalog: everything you command on the map.
+
+	  class      "vehicle" (military factories), "infantry" (barracks: squads
+	             of classic Roblox soldiers) or "air" (helipad: helicopters)
+	  vs         damage multipliers against each class (missing = 1, air = 0
+	             unless listed - only anti-air and door guns hit helicopters)
+	  cargo      transports: squads carried, supply points, slung vehicles
+	  light      vehicles a Chinook can sling-load
+	  fob        can set up a Forward Operating Base on the battlefield
 ]]
 
 export type UnitDef = {
@@ -1043,6 +1156,11 @@ export type UnitDef = {
 	range: number,
 	capture: number, -- capture points per second
 	antiAir: number?, -- chance to shoot down projectiles nearby
+	class: string, -- "vehicle" | "infantry" | "air"
+	vs: { [string]: number },
+	cargo: { squads: number?, supplies: number?, vehicles: number? }?,
+	light: boolean?,
+	fob: boolean?,
 	model: string,
 	params: { [string]: any }?,
 	research: string,
@@ -1058,9 +1176,17 @@ local byId: { [string]: UnitDef } = {}
 
 local FactionPass = { Eastern = "EasternPack", European = "EuropeanPack" }
 
+local DEFAULT_VS = { infantry = 1, vehicle = 1, air = 0 }
+
 local function U(def: { [string]: any })
 	def.order = #list + 1
 	def.faction = def.faction or "Standard"
+	def.class = def.class or "vehicle"
+	local vs = table.clone(DEFAULT_VS)
+	for k, v in def.vs or {} do
+		vs[k] = v
+	end
+	def.vs = vs
 	if def.faction ~= "Standard" then
 		def.pass = FactionPass[def.faction]
 	end
@@ -1069,39 +1195,87 @@ local function U(def: { [string]: any })
 	byId[typed.id] = typed
 end
 
-U({ id = "truck", name = "Supply Truck", role = "Capture", cost = 1500, fuel = 20, steel = 10, time = 10,
-	hp = 60, speed = 34, dps = 0, range = 0, capture = 1, model = "truck", research = "mechanized",
-	desc = "Cheap and fast. Good for holding points." })
+-- Vehicles (military factories) ------------------------------------------
+U({ id = "truck", name = "Logistics Truck", role = "Transport", cost = 1500, fuel = 20, steel = 10, time = 10,
+	hp = 70, speed = 34, dps = 0, range = 0, capture = 1, model = "truck", research = "mechanized",
+	cargo = { squads = 2, supplies = 150 }, light = true, fob = true,
+	desc = "Carries 2 squads or 150 supplies. Can set up a FOB." })
+U({ id = "humvee", name = "Humvee", role = "Transport", cost = 3500, fuel = 20, steel = 15, time = 14,
+	hp = 120, speed = 40, dps = 6, range = 55, capture = 2, model = "humvee", research = "military_doctrine",
+	cargo = { squads = 1 }, light = true, vs = { infantry = 1.4, vehicle = 0.3, air = 0.3 },
+	desc = "Fast armoured car with a roof gun. Carries 1 squad." })
 U({ id = "marder", name = "Marder", role = "IFV", cost = 6000, fuel = 60, steel = 40, time = 25,
 	hp = 180, speed = 26, dps = 10, range = 60, capture = 3, model = "ifv", research = "mechanized",
-	desc = "Infantry fighting vehicle. Best at capturing." })
+	cargo = { squads = 1 }, light = true, vs = { infantry = 1.3, vehicle = 0.8, air = 0.2 },
+	desc = "Infantry fighting vehicle. Carries a squad and captures fast." })
 U({ id = "leopard", name = "Leopard", role = "Tank", cost = 14000, fuel = 100, steel = 90, time = 40,
 	hp = 420, speed = 20, dps = 24, range = 80, capture = 2, model = "tank", research = "armor",
-	desc = "Main battle tank. Tough and hard hitting." })
+	vs = { vehicle = 1.2 }, desc = "Main battle tank. Tough and hard hitting." })
 U({ id = "himars", name = "HIMARS", role = "Artillery", cost = 18000, fuel = 80, steel = 60, time = 45,
 	hp = 140, speed = 28, dps = 40, range = 220, capture = 1, model = "mlrs", research = "rocket_artillery",
 	desc = "Long-range rockets. Shreds garrisons from afar." })
 U({ id = "gepard", name = "Gepard", role = "Anti-Air", cost = 12000, fuel = 60, steel = 50, time = 30,
 	hp = 200, speed = 24, dps = 8, range = 60, capture = 1, antiAir = 0.3, model = "spaag",
-	research = "air_defense_2", desc = "Mobile anti-air. Protects your army from drones and missiles." })
+	vs = { air = 3, vehicle = 0.4, infantry = 0.8 }, light = true,
+	research = "air_defense_2", desc = "Mobile anti-air. Shreds helicopters, drones and missiles." })
 U({ id = "bmp", name = "BMP-3", role = "IFV", faction = "Eastern", cost = 6500, fuel = 60, steel = 40,
 	time = 22, hp = 190, speed = 28, dps = 13, range = 65, capture = 3, model = "ifv", params = { eastern = true },
-	research = "mechanized", desc = "Eastern IFV with a heavier gun." })
+	cargo = { squads = 1 }, light = true, vs = { infantry = 1.3, vehicle = 0.9, air = 0.2 },
+	research = "mechanized", desc = "Eastern IFV with a heavier gun. Carries a squad." })
 U({ id = "t90", name = "T-90", role = "Tank", faction = "Eastern", cost = 15000, fuel = 100, steel = 95,
 	time = 38, hp = 460, speed = 20, dps = 26, range = 80, capture = 2, model = "tank", params = { eastern = true },
-	research = "armor", desc = "Eastern main battle tank." })
+	vs = { vehicle = 1.2 }, research = "armor", desc = "Eastern main battle tank." })
 U({ id = "tor_m", name = "Tor-M", role = "Anti-Air", faction = "Eastern", cost = 13000, fuel = 60, steel = 50,
 	time = 28, hp = 220, speed = 22, dps = 6, range = 60, capture = 1, antiAir = 0.4, model = "spaag",
-	params = { eastern = true }, research = "air_defense_2", desc = "Eastern mobile SAM." })
+	params = { eastern = true }, vs = { air = 3.5, vehicle = 0.3, infantry = 0.6 }, light = true,
+	research = "air_defense_2", desc = "Eastern mobile SAM." })
 U({ id = "vbci", name = "VBCI", role = "IFV", faction = "European", cost = 6500, fuel = 55, steel = 40,
 	time = 22, hp = 200, speed = 32, dps = 11, range = 65, capture = 3, model = "ifv", params = { wheeled = true },
-	research = "mechanized", desc = "Fast wheeled European IFV." })
+	cargo = { squads = 1 }, light = true, vs = { infantry = 1.3, vehicle = 0.8, air = 0.2 },
+	research = "mechanized", desc = "Fast wheeled European IFV. Carries a squad." })
 U({ id = "leclerc", name = "Leclerc", role = "Tank", faction = "European", cost = 15500, fuel = 100, steel = 90,
 	time = 38, hp = 420, speed = 24, dps = 26, range = 85, capture = 2, model = "tank", params = { european = true },
-	research = "armor", desc = "Fast European main battle tank." })
+	vs = { vehicle = 1.2 }, research = "armor", desc = "Fast European main battle tank." })
 U({ id = "caesar", name = "CAESAR", role = "Artillery", faction = "European", cost = 17000, fuel = 70, steel = 55,
 	time = 40, hp = 150, speed = 32, dps = 44, range = 240, capture = 1, model = "mlrs", params = { gun = true },
 	research = "rocket_artillery", desc = "Truck-mounted howitzer with extreme range." })
+
+-- Infantry (barracks): squads of classic Roblox soldiers ---------------------
+U({ id = "rifle_squad", name = "Rifle Squad", role = "Infantry", class = "infantry", cost = 1200, fuel = 0,
+	steel = 5, time = 12, hp = 110, speed = 13, dps = 7, range = 55, capture = 4, model = "squad",
+	params = { kit = "rifle", count = 4 }, research = "military_doctrine",
+	vs = { infantry = 1.2, vehicle = 0.25, air = 0.15 },
+	desc = "Four riflemen in plate carriers. The best at capturing points." })
+U({ id = "at_team", name = "Anti-Tank Team", role = "Anti-Tank", class = "infantry", cost = 2400, fuel = 0,
+	steel = 12, time = 16, hp = 90, speed = 12, dps = 15, range = 75, capture = 2, model = "squad",
+	params = { kit = "at", count = 3 }, research = "mechanized",
+	vs = { infantry = 0.4, vehicle = 2.2, air = 0.6 },
+	desc = "Three soldiers with rocket launchers. Wrecks armour." })
+U({ id = "recon_team", name = "Recon Team", role = "Recon", class = "infantry", cost = 1800, fuel = 0,
+	steel = 6, time = 14, hp = 80, speed = 16, dps = 9, range = 90, capture = 3, model = "squad",
+	params = { kit = "recon", count = 2 }, research = "military_doctrine",
+	vs = { infantry = 1.5, vehicle = 0.2, air = 0.1 },
+	desc = "Two marksmen in ghillie wraps. Fast and long-ranged." })
+U({ id = "vdv_squad", name = "VDV Squad", role = "Infantry", class = "infantry", faction = "Eastern", cost = 1500,
+	fuel = 0, steel = 6, time = 12, hp = 130, speed = 13, dps = 8, range = 55, capture = 4, model = "squad",
+	params = { kit = "rifle", count = 4, eastern = true }, research = "military_doctrine",
+	vs = { infantry = 1.25, vehicle = 0.3, air = 0.15 },
+	desc = "Eastern paratroopers in digital camo and heavy helmets." })
+U({ id = "legion_squad", name = "Legion Squad", role = "Infantry", class = "infantry", faction = "European",
+	cost = 1500, fuel = 0, steel = 6, time = 12, hp = 115, speed = 15, dps = 8, range = 60, capture = 4,
+	model = "squad", params = { kit = "rifle", count = 4, european = true }, research = "military_doctrine",
+	vs = { infantry = 1.25, vehicle = 0.3, air = 0.15 },
+	desc = "European legionnaires in desert kit. Quick on their feet." })
+
+-- Helicopters (helipad) -----------------------------------------------------
+U({ id = "blackhawk", name = "Black Hawk", role = "Air Assault", class = "air", cost = 16000, fuel = 80,
+	steel = 40, time = 35, hp = 220, speed = 80, dps = 8, range = 70, capture = 0, model = "blackhawk",
+	cargo = { squads = 2, supplies = 60 }, research = "aviation", vs = { infantry = 1.3, vehicle = 0.3, air = 0 },
+	desc = "Fast utility helicopter with door guns. Flies 2 squads anywhere." })
+U({ id = "chinook", name = "Chinook", role = "Heavy Lift", class = "air", cost = 28000, fuel = 140, steel = 70,
+	time = 50, hp = 320, speed = 64, dps = 0, range = 0, capture = 0, model = "chinook",
+	cargo = { squads = 3, supplies = 300, vehicles = 1 }, fob = true, research = "aviation",
+	desc = "Twin-rotor heavy lifter: 3 squads, 300 supplies and a light vehicle under the belly." })
 
 function Units.get(id: string): UnitDef?
 	return byId[id]
@@ -1111,11 +1285,16 @@ function Units.all(): { UnitDef }
 	return list
 end
 
+-- Which production building makes a unit: "vehicle" | "infantry" | "air".
+function Units.makes(def: UnitDef): string
+	return def.class
+end
+
 return Units
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="15">
+        <Item class="ModuleScript" referent="16">
           <Properties>
             <string name="Name">WarMap</string>
             <string name="Source"><![CDATA[--[[
@@ -1156,7 +1335,7 @@ return WarMap
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="16">
+        <Item class="ModuleScript" referent="17">
           <Properties>
             <string name="Name">Weapons</string>
             <string name="Source"><![CDATA[--[[
@@ -1242,7 +1421,7 @@ return Weapons
           </Properties>
         </Item>
       </Item>
-      <Item class="ModuleScript" referent="17">
+      <Item class="ModuleScript" referent="18">
         <Properties>
           <string name="Name">Config</string>
           <string name="Source"><![CDATA[--[[
@@ -1351,6 +1530,33 @@ Config.Codes = {
 }
 
 ---------------------------------------------------------------------------
+-- Farming + food
+---------------------------------------------------------------------------
+Config.FoodBaseCap = 1000 -- national food storage before barns / silos
+Config.FoodPerCitizen = 0.02 -- food eaten per citizen every pay day
+Config.WellFedHappiness = 12 -- happiness bonus while food covers the population
+Config.FoodPrice = 4 -- $ per food sold (overflow from full storage sells automatically)
+Config.FarmBoostRange = 70 -- studs: farmhouses / barns speed up fields this close
+
+---------------------------------------------------------------------------
+-- Field logistics: transports, helicopters, supplies and FOBs
+---------------------------------------------------------------------------
+Config.HeliAltitude = 60 -- cruise height of helicopters (studs)
+Config.BoardRange = 70 -- squads this close to a transport can climb aboard
+Config.SupplyCost = { food = 1, steel = 1 } -- per supply point loaded at home
+Config.FobCost = 20000
+Config.FobSteel = 300
+Config.FobMax = 1 -- per nation (VIP: +1)
+Config.FobHp = 1500
+Config.FobSupplyCap = 800
+Config.FobRadius = 110 -- friendly units this close are healed from supplies
+Config.FobHealRate = 12 -- hp per second per unit while supplies last
+Config.FobHealPerSupply = 20 -- hp restored per supply point
+Config.FobGunRange = 80
+Config.FobGunDps = 10
+Config.FobSpacing = 180 -- min distance from strategic points and other FOBs
+
+---------------------------------------------------------------------------
 -- Nation identity, ranks and world
 ---------------------------------------------------------------------------
 Config.NationNameMin = 3
@@ -1374,7 +1580,7 @@ return Config
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="18">
+      <Item class="ModuleScript" referent="19">
         <Properties>
           <string name="Name">ModelBuilder</string>
           <string name="Source"><![CDATA[--[[
@@ -1588,71 +1794,283 @@ local function into(sub: Model, fn: () -> ())
 end
 
 ---------------------------------------------------------------------------
+-- Facade helpers: framed windows, doors and trims on any side of a box
+---------------------------------------------------------------------------
+-- A facade: centre (ox, oz), outward normal (nx, nz), along-facade axis (ax, az).
+type Face = { ox: number, oz: number, nx: number, nz: number, ax: number, az: number }
+
+local function faceOf(bw: number, bd: number, cx: number, cz: number, side: string): Face
+	if side == "front" then
+		return { ox = cx, oz = cz - bd / 2, nx = 0, nz = -1, ax = 1, az = 0 }
+	elseif side == "back" then
+		return { ox = cx, oz = cz + bd / 2, nx = 0, nz = 1, ax = -1, az = 0 }
+	elseif side == "left" then
+		return { ox = cx - bw / 2, oz = cz, nx = -1, nz = 0, ax = 0, az = -1 }
+	end
+	return { ox = cx + bw / 2, oz = cz, nx = 1, nz = 0, ax = 0, az = 1 }
+end
+
+-- Box stuck on a facade: `along` the wall, bottom at y, `out` from the wall.
+local function onFace(f: Face, along: number, y: number, sa: number, sy: number, out: number, depth: number, color: Color3, material: Enum.Material?): Part
+	local x = f.ox + f.ax * along + f.nx * (out + depth / 2)
+	local z = f.oz + f.az * along + f.nz * (out + depth / 2)
+	local sx = math.abs(f.ax) * sa + math.abs(f.nx) * depth
+	local sz = math.abs(f.az) * sa + math.abs(f.nz) * depth
+	local p = blk(sx, sy, sz, x, y, z, color, material)
+	p.CanCollide = false
+	return p
+end
+
+-- Window with a frame, a sill and optional shutters; the glass glows at night.
+local function framedWindow(f: Face, along: number, y: number, ww: number, wh: number, frameC: Color3, shutterC: Color3?)
+	onFace(f, along, y - 0.15, ww + 0.36, wh + 0.3, -0.02, 0.1, frameC)
+	lit(onFace(f, along, y, ww, wh, 0.06, 0.06, C.window))
+	onFace(f, along, y + wh / 2 - 0.05, ww, 0.1, 0.1, 0.04, frameC) -- transom bar
+	onFace(f, along, y - 0.32, ww + 0.6, 0.18, 0, 0.32, frameC)
+	if shutterC then
+		for _, s in { -1, 1 } do
+			onFace(f, along + s * (ww / 2 + 0.42), y, 0.5, wh, 0.02, 0.1, shutterC)
+		end
+	end
+end
+
+-- Front door with frame and a step.
+local function door(f: Face, along: number, y: number, dw: number, dh: number, color: Color3, frameC: Color3)
+	onFace(f, along, y, dw + 0.4, dh + 0.25, -0.02, 0.1, frameC)
+	onFace(f, along, y, dw, dh, 0.06, 0.08, color)
+	onFace(f, along + dw * 0.32, y + dh * 0.45, 0.14, 0.14, 0.12, 0.08, C.yellow) -- handle
+	onFace(f, along, y - 0.25, dw + 0.8, 0.25, 0, 0.9, C.pad) -- step
+end
+
+-- Glowing ribbon of glass across a facade with mullions every `step` studs.
+local function ribbon(f: Face, length: number, y: number, h: number, step: number, frameC: Color3)
+	lit(onFace(f, 0, y, length, h, 0.02, 0.06, C.glass))
+	local n = math.max(1, math.floor(length / step))
+	for i = 1, n - 1 do
+		onFace(f, -length / 2 + i * (length / n), y, 0.22, h, 0.06, 0.1, frameC)
+	end
+end
+
+local function hedge(x: number, z: number, sx: number, sz: number)
+	noCollide(blk(sx, 0.9, sz, x, G, z, C.leaf, Enum.Material.Grass))
+end
+
+local function picketFence(x0: number, x1: number, z: number)
+	noCollide(blk(x1 - x0, 0.12, 0.12, (x0 + x1) / 2, G + 0.75, z, C.white))
+	noCollide(blk(x1 - x0, 0.12, 0.12, (x0 + x1) / 2, G + 0.35, z, C.white))
+	local n = math.max(2, math.floor((x1 - x0) / 1.6))
+	for i = 0, n do
+		noCollide(blk(0.16, 1.05, 0.16, x0 + (x1 - x0) * i / n, G, z, C.white))
+	end
+end
+
+-- Low parapet ring around a flat roof.
+local function parapet(bw: number, bd: number, cx: number, cz: number, y: number, color: Color3)
+	blk(bw + 0.2, 0.7, 0.3, cx, y, cz - bd / 2 + 0.05, color)
+	blk(bw + 0.2, 0.7, 0.3, cx, y, cz + bd / 2 - 0.05, color)
+	blk(0.3, 0.7, bd, cx - bw / 2 + 0.05, y, cz, color)
+	blk(0.3, 0.7, bd, cx + bw / 2 - 0.05, y, cz, color)
+end
+
+local function rooftopKit(bw: number, bd: number, cx: number, cz: number, y: number)
+	blk(2.4, 1.4, 2, cx - bw * 0.25, y, cz + bd * 0.15, C.metal) -- AC unit
+	noCollide(blk(1.6, 0.2, 1.6, cx - bw * 0.25, y + 1.4, cz + bd * 0.15, C.darkMetal))
+	blk(2.6, 2.4, 2.6, cx + bw * 0.22, y, cz - bd * 0.1, C.wallCool) -- stair housing
+	noCollide(cyl(2.2, 2.2, cx + bw * 0.3, y + 0.4, cz + bd * 0.25, C.brick)) -- water tank
+	noCollide(blk(0.3, 0.4, 2.4, cx + bw * 0.3, y, cz + bd * 0.25, C.darkMetal))
+end
+
+local WALLS = { rgb(236, 226, 206), rgb(214, 196, 170), rgb(196, 214, 222), rgb(226, 206, 196), rgb(206, 220, 196) }
+local SHUTTERS = { rgb(64, 92, 72), rgb(58, 84, 120), rgb(120, 60, 52), rgb(90, 90, 96) }
+
+---------------------------------------------------------------------------
 -- Building styles
 ---------------------------------------------------------------------------
 local Styles: { [string]: (w: number, d: number, p: { [string]: any }) -> () } = {}
 
+-- Suburban house: lawn, path, porch, framed windows with shutters, chimney,
+-- picket fence and a tree. `long` adds a garage on the side.
 Styles.house = function(w, d, p)
-	local bw, bd = w - 1.6, d - 1.6
-	local wallC = p.wallColor or C.wallWarm
-	blk(bw, 5, bd, 0, G, 0, wallC)
-	local roofC = p.roof == "slate" and C.slate or C.terracotta
-	gableRoof(bw + 0.6, bd, 0, G + 5, 0, roofC)
-	noCollide(blk(1.4, 2.6, 0.2, 0, G, -bd / 2 - 0.1, C.trunk)) -- door
-	lit(blk(1.2, 1.2, 0.2, -bw / 4 - 0.3, G + 2.2, -bd / 2 - 0.1, C.window))
-	lit(blk(1.2, 1.2, 0.2, bw / 4 + 0.3, G + 2.2, -bd / 2 - 0.1, C.window))
-	lit(blk(0.2, 1.2, 1.2, bw / 2 + 0.1, G + 2.2, 0, C.window))
-	lit(blk(0.2, 1.2, 1.2, -bw / 2 - 0.1, G + 2.2, 0, C.window))
-	blk(0.8, 2.5, 0.8, bw / 4, G + 6, bd / 4, C.brick)
+	local b = M.PrimaryPart :: BasePart
+	b.Color = C.grass
+	b.Material = Enum.Material.Grass
+	local long = p.long == true
+	local slate = p.roof == "slate"
+	local bw = long and w - 2.6 or w - 2
+	local bd = long and d - 5.6 or d - 3
+	local cx = long and -0.6 or 0
+	local cz = long and 1.4 or 0.8
+	local wallC = slate and WALLS[3] or WALLS[1]
+	local trim = C.white
+	local shutter = slate and SHUTTERS[2] or SHUTTERS[1]
+	local wallH = 4.6
+	blk(bw + 0.4, 0.45, bd + 0.4, cx, G, cz, C.pad) -- foundation
+	blk(bw, wallH, bd, cx, G + 0.45, cz, wallC)
+	for _, sx in { -1, 1 } do
+		for _, sz in { -1, 1 } do
+			noCollide(blk(0.28, wallH, 0.28, cx + sx * bw / 2, G + 0.45, cz + sz * bd / 2, trim))
+		end
+	end
+	noCollide(blk(bw + 0.3, 0.3, bd + 0.3, cx, G + 0.45 + wallH - 0.3, cz, trim)) -- eaves band
+	local roofC = slate and C.slate or C.terracotta
+	local top = G + 0.45 + wallH
+	gableRoof(bw + 1.1, bd + 1, cx, top, cz, roofC, 34)
+	-- chimney
+	blk(0.9, 3.4, 0.9, cx + bw * 0.28, top, cz + bd * 0.2, C.brick)
+	noCollide(blk(1.1, 0.25, 1.1, cx + bw * 0.28, top + 3.4, cz + bd * 0.2, C.darkMetal))
+	-- front: door, porch roof, windows
+	local front = faceOf(bw, bd, cx, cz, "front")
+	door(front, 0, G + 0.45, 1.2, 2.4, slate and SHUTTERS[3] or C.trunk, trim)
+	noCollide(plank(2.6, 0.18, 1.5, CFrame.new(cx, G + 3.25, cz - bd / 2 - 0.7) * CFrame.Angles(math.rad(-14), 0, 0), roofC))
+	for _, s in { -1, 1 } do
+		noCollide(blk(0.18, 2.8, 0.18, cx + s * 1.15, G + 0.45, cz - bd / 2 - 1.3, trim))
+	end
+	for _, s in { -1, 1 } do
+		framedWindow(front, s * bw * 0.29, G + 1.55, 1.1, 1.3, trim, shutter)
+	end
+	-- attic window in the gable
+	lit(onFace(front, 0, top + 0.6, 0.8, 0.8, 0.06, 0.06, C.window))
+	for _, side in { "left", "right" } do
+		local f = faceOf(bw, bd, cx, cz, side)
+		framedWindow(f, -bd * 0.2, G + 1.55, 1.0, 1.3, trim, nil)
+		framedWindow(f, bd * 0.22, G + 1.55, 1.0, 1.3, trim, nil)
+	end
+	framedWindow(faceOf(bw, bd, cx, cz, "back"), 0, G + 1.55, 1.6, 1.3, trim, nil)
+	-- garden: path, fence, hedge, tree, mailbox
+	local frontEdge = -d / 2 + 0.3
+	noCollide(blk(1.1, 0.06, (cz - bd / 2) - frontEdge, cx, G, (frontEdge + cz - bd / 2) / 2, rgb(206, 196, 176)))
+	picketFence(-w / 2 + 0.3, cx - 0.8, frontEdge)
+	picketFence(cx + 0.8, w / 2 - 0.3, frontEdge)
+	hedge(cx - bw * 0.3, cz - bd / 2 - 1.1, bw * 0.3, 0.7)
+	tree(w / 2 - 1.2, d / 2 - 1.2, 0.75)
+	noCollide(blk(0.14, 1.1, 0.14, cx + 1.4, G, frontEdge + 0.4, C.darkMetal))
+	noCollide(blk(0.4, 0.3, 0.6, cx + 1.4, G + 1.1, frontEdge + 0.4, C.blue))
+	if long then
+		-- single garage on the right with its own little roof
+		local gx = cx + bw / 2 + 1.25
+		blk(2.3, 3, bd * 0.6, gx, G + 0.45, cz - bd * 0.2, wallC)
+		noCollide(blk(2.6, 0.3, bd * 0.6 + 0.4, gx, G + 3.45, cz - bd * 0.2, roofC))
+		noCollide(blk(1.9, 2.3, 0.1, gx, G + 0.45, cz - bd * 0.2 - bd * 0.3 - 0.05, C.wallCool))
+		noCollide(blk(1.6, 0.06, cz - bd * 0.5 - frontEdge, gx, G, (frontEdge + cz - bd * 0.5) / 2, C.asphalt))
+	end
 end
 
+-- Terrace of distinct homes: colours, stoops, bay windows, two floors.
 Styles.townhouse = function(w, d, p)
 	local n = p.count or 3
 	local each = w / n
-	local walls = { C.wallWarm, C.wall, rgb(222, 200, 186) }
+	local bd = d - 2.2
+	local cz = 0.7
+	local floors = 2
+	local fh = 3.3
 	for i = 1, n do
 		local x = -w / 2 + each * (i - 0.5)
-		local bw, bd = each - 0.3, d - 1.6
-		blk(bw, 7, bd, x, G, 0, walls[(i - 1) % #walls + 1])
-		gableRoof(bw, bd, x, G + 7, 0, i % 2 == 0 and C.slate or C.terracotta, 24)
-		noCollide(blk(1.4, 2.6, 0.2, x, G, -bd / 2 - 0.1, C.trunk))
-		lit(blk(bw - 2, 1.2, 0.2, x, G + 4.4, -bd / 2 - 0.1, C.window))
-		lit(blk(bw - 2, 1.2, 0.2, x, G + 4.4, bd / 2 + 0.1, C.window))
+		local bw = each - 0.15
+		local wallC = WALLS[(i + 1) % #WALLS + 1]
+		local trim = C.white
+		blk(bw, floors * fh + 0.5, bd, x, G, cz, wallC)
+		noCollide(blk(bw + 0.1, 0.35, bd + 0.1, x, G + floors * fh, cz, trim)) -- cornice
+		local roofC = i % 2 == 0 and C.slate or C.terracotta
+		gableRoof(bw + 0.2, bd + 0.6, x, G + floors * fh + 0.5, cz, roofC, 30)
+		blk(0.7, 2.4, 0.7, x + bw * 0.3, G + floors * fh + 1.2, cz + bd * 0.25, C.brick)
+		local front = faceOf(bw, bd, x, cz, "front")
+		local doorAt = (i % 2 == 0) and -bw * 0.25 or bw * 0.25
+		door(front, doorAt, G + 0.6, 1.1, 2.4, SHUTTERS[(i % #SHUTTERS) + 1], trim)
+		onFace(front, doorAt, G, 1.8, 0.6, 0, 1.1, C.pad) -- stoop
+		-- ground-floor bay window
+		local bayAt = -doorAt
+		onFace(front, bayAt, G + 0.5, 2.2, 2.4, 0, 0.9, wallC)
+		lit(onFace(front, bayAt, G + 1.1, 1.8, 1.5, 0.9, 0.06, C.window))
+		noCollide(onFace(front, bayAt, G + 2.9, 2.4, 0.2, 0, 1.0, trim))
+		-- upper windows
+		framedWindow(front, -bw * 0.25, G + fh + 1.1, 1.1, 1.4, trim, nil)
+		framedWindow(front, bw * 0.25, G + fh + 1.1, 1.1, 1.4, trim, nil)
+		local back = faceOf(bw, bd, x, cz, "back")
+		ribbon(back, bw - 1.2, G + 1.3, 1.3, 1.5, trim)
+		ribbon(back, bw - 1.2, G + fh + 1.3, 1.3, 1.5, trim)
+		hedge(x, -d / 2 + 0.6, bw - 1.2, 0.6)
 	end
 end
 
+-- Mid-rise apartments: base storey, coloured body, window grid, balconies,
+-- entrance canopies and a busy flat roof.
 Styles.apartment = function(w, d, p)
 	local floors = p.floors or 4
 	local fh = 3.2
-	local bw, bd = w - 1.4, d - 1.4
-	blk(bw, floors * fh + 0.8, bd, 0, G, 0, C.panel)
-	windows(bw, bd, 0, 0, G + 0.8, floors, fh, C.window, true)
-	blk(bw + 0.4, 0.6, bd + 0.4, 0, G + floors * fh + 0.8, 0, C.roofGrey)
-	-- rooftop details
-	local units = math.max(1, math.floor(bw / 12))
-	for i = 1, units do
-		local x = -bw / 2 + (i - 0.5) * (bw / units)
-		blk(2.2, 1.6, 2.2, x, G + floors * fh + 1.4, 0, C.metal)
+	local bw, bd = w - 1.6, d - 1.8
+	local bodyC = WALLS[(math.floor(w) % #WALLS) + 1]
+	local trim = rgb(240, 238, 230)
+	blk(bw, fh, bd, 0, G, 0, rgb(170, 168, 162)) -- ground floor
+	blk(bw, (floors - 1) * fh, bd, 0, G + fh, 0, bodyC)
+	local top = G + floors * fh
+	noCollide(blk(bw + 0.4, 0.4, bd + 0.4, 0, G + fh - 0.2, 0, trim)) -- floor band
+	parapet(bw, bd, 0, 0, top, trim)
+	local front = faceOf(bw, bd, 0, 0, "front")
+	local back = faceOf(bw, bd, 0, 0, "back")
+	local bays = math.max(2, math.floor(bw / 5))
+	local bayW = bw / bays
+	for f = 1, floors - 1 do
+		local y = G + f * fh + 0.9
+		ribbon(front, bw - 1, y, 1.5, bayW / 2, trim)
+		ribbon(back, bw - 1, y, 1.5, bayW / 2, trim)
+		-- balconies on alternating bays
+		for i = 1, bays do
+			if (i + f) % 2 == 0 then
+				local along = -bw / 2 + (i - 0.5) * bayW
+				onFace(front, along, y - 0.95, bayW * 0.8, 0.25, 0, 1.3, trim)
+				lit(onFace(front, along, y - 0.7, bayW * 0.8, 0.9, 1.25, 0.06, rgb(150, 190, 210)))
+			end
+		end
 	end
-	-- entrances
-	local doors = math.max(1, math.floor(bw / 10))
+	for _, side in { "left", "right" } do
+		local f = faceOf(bw, bd, 0, 0, side)
+		for fl = 1, floors - 1 do
+			framedWindow(f, 0, G + fl * fh + 0.9, 1.1, 1.5, trim, nil)
+		end
+	end
+	-- ground floor: glass lobby per stairwell + canopy
+	local doors = math.max(1, math.floor(bw / 12))
 	for i = 1, doors do
-		local x = -bw / 2 + (i - 0.5) * (bw / doors)
-		noCollide(blk(2, 2.6, 0.4, x, G, -bd / 2 - 0.2, C.darkMetal))
+		local along = -bw / 2 + (i - 0.5) * (bw / doors)
+		lit(onFace(front, along, G + 0.3, 2.6, 2.5, 0.02, 0.06, C.glass))
+		onFace(front, along, G + 2.9, 3.6, 0.25, 0, 1.6, C.darkMetal)
+		onFace(front, along, G, 3.4, 0.3, 0, 1.8, C.pad)
 	end
+	ribbon(back, bw - 1, G + 0.9, 1.4, 2.5, trim)
+	rooftopKit(bw, bd, 0, 0, top)
 end
 
+-- Residential highrise: podium, slim shaft with corner balconies, crown.
 Styles.tower = function(w, d, p)
 	local floors = p.floors or 14
-	local fh = 3.2
-	local bw, bd = w - 2.2, d - 2.2
-	blk(w - 0.8, 4, d - 0.8, 0, G, 0, C.wallCool)
-	blk(bw, floors * fh, bd, 0, G + 4, 0, C.wall)
-	windows(bw, bd, 0, 0, G + 4, floors, fh, C.glass)
-	local top = G + 4 + floors * fh
-	blk(bw - 2, 3, bd - 2, 0, top, 0, C.roofGrey)
-	noCollide(cyl(6, 0.3, 0, top + 3, 0, C.metal))
-	noCollide(ball(0.7, 0, top + 9.2, 0, C.red, Enum.Material.Neon))
+	local fh = 3.1
+	local pw, pd = w - 0.8, d - 0.8
+	blk(pw, 4.2, pd, 0, G, 0, rgb(120, 126, 132)) -- podium
+	lit(onFace(faceOf(pw, pd, 0, 0, "front"), 0, G + 0.4, pw - 2, 3, 0.02, 0.06, C.glass))
+	noCollide(blk(pw + 0.3, 0.4, pd + 0.3, 0, G + 4.2, 0, rgb(236, 236, 230)))
+	local bw, bd = w - 3, d - 3
+	local base = G + 4.6
+	blk(bw, floors * fh, bd, 0, base, 0, rgb(232, 230, 222))
+	for _, side in { "front", "back", "left", "right" } do
+		local f = faceOf(bw, bd, 0, 0, side)
+		for fl = 0, floors - 1 do
+			ribbon(f, bw - 1.2, base + fl * fh + 0.8, 1.6, bw / 3, rgb(210, 210, 204))
+		end
+		-- vertical accent fin down the middle
+		onFace(f, 0, base, 0.5, floors * fh, 0, 0.5, rgb(64, 96, 132))
+	end
+	-- corner balconies every other floor
+	for fl = 1, floors - 1, 2 do
+		for _, sx in { -1, 1 } do
+			noCollide(blk(2.2, 0.25, 2.2, sx * (bw / 2 - 0.6), base + fl * fh, -bd / 2 - 0.5, rgb(236, 236, 230)))
+		end
+	end
+	local top = base + floors * fh
+	blk(bw - 1.4, 2.6, bd - 1.4, 0, top, 0, rgb(64, 96, 132)) -- crown
+	noCollide(blk(bw + 0.2, 0.4, bd + 0.2, 0, top, 0, rgb(236, 236, 230)))
+	noCollide(cyl(6, 0.3, 0, top + 2.6, 0, C.metal))
+	local beacon = noCollide(ball(0.7, 0, top + 8.8, 0, C.red, Enum.Material.Neon))
+	beacon.Name = "Beacon"
 end
 
 Styles.road = function(w, d, _p)
@@ -1877,14 +2295,49 @@ Styles.factory = function(w, d, p)
 	end
 end
 
-Styles.shop = function(w, d, _p)
-	local bw, bd = w - 1.4, d - 1.4
-	blk(bw, 4.6, bd, 0, G, 0, C.wall)
-	blk(bw + 0.2, 0.4, bd + 0.2, 0, G + 4.6, 0, C.roofGrey)
-	noCollide(blk(bw - 1, 2.6, 0.2, 0, G + 0.6, -bd / 2 - 0.1, C.glass))
-	local awning = noCollide(plank(bw, 0.2, 1.8, CFrame.new(0, G + 3.6, -bd / 2 - 0.8) * CFrame.Angles(math.rad(18), 0, 0), C.red))
-	awning.Name = "Awning"
-	noCollide(blk(bw * 0.7, 0.9, 0.25, 0, G + 4.8, -bd / 2 + 0.2, C.yellow))
+-- Corner shop: brick, big display windows, striped awning, sign and bins.
+Styles.shop = function(w, d, p)
+	local bw, bd = w - 1.6, d - 1.8
+	local cz = 0.3
+	local brick = rgb(176, 104, 78)
+	blk(bw, 5, bd, 0, G, cz, brick)
+	noCollide(blk(bw + 0.4, 0.5, bd + 0.4, 0, G + 5, cz, rgb(236, 230, 214))) -- cornice
+	local front = faceOf(bw, bd, 0, cz, "front")
+	-- display windows either side of the door
+	for _, s in { -1, 1 } do
+		onFace(front, s * bw * 0.27, G + 0.5, bw * 0.36 + 0.3, 2.9, -0.02, 0.1, rgb(48, 54, 52))
+		lit(onFace(front, s * bw * 0.27, G + 0.65, bw * 0.36, 2.6, 0.06, 0.06, C.glass))
+	end
+	door(front, 0, G, 1.3, 2.8, rgb(48, 54, 52), rgb(48, 54, 52))
+	-- striped awning
+	local stripes = 6
+	for i = 1, stripes do
+		local along = -bw / 2 + (i - 0.5) * (bw / stripes)
+		local x = along
+		noCollide(plank(bw / stripes, 0.15, 1.7, CFrame.new(x, G + 3.75, cz - bd / 2 - 0.75) * CFrame.Angles(math.rad(20), 0, 0), i % 2 == 0 and C.white or rgb(196, 58, 52)))
+	end
+	-- sign board with a name
+	local board = noCollide(onFace(front, 0, G + 4.05, bw * 0.7, 0.85, 0, 0.2, rgb(34, 58, 52)))
+	board.Name = "ShopSign"
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Front
+	gui.CanvasSize = Vector2.new(300, 50)
+	gui.LightInfluence = 0.3
+	gui.Parent = board
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = rgb(250, 226, 160)
+	label.TextScaled = true
+	label.FontFace = Font.new("rbxasset://fonts/families/Sarpanch.json", Enum.FontWeight.Bold)
+	label.Text = p.label or "CORNER SHOP"
+	label.Parent = gui
+	-- side window, roof unit, bins
+	framedWindow(faceOf(bw, bd, 0, cz, "right"), 0, G + 1.4, 1.6, 1.4, rgb(236, 230, 214), nil)
+	blk(2.2, 1.2, 1.6, -bw * 0.2, G + 5.5, cz + bd * 0.15, C.metal)
+	for i = 0, 1 do
+		noCollide(blk(0.8, 1.1, 0.8, -w / 2 + 1 + i * 1, G, d / 2 - 0.8, i == 0 and rgb(58, 110, 70) or C.darkMetal))
+	end
 end
 
 Styles.park = function(w, d, _p)
@@ -1900,15 +2353,44 @@ Styles.park = function(w, d, _p)
 	noCollide(blk(1.6, 0.5, 0.5, 2, G + 0.3, -1.2, C.trunk))
 end
 
+-- Office block: glass curtain wall with spandrels and mullions, a recessed
+-- double-height lobby with columns, plant room and a rooftop sign.
 Styles.office = function(w, d, p)
 	local floors = p.floors or 8
-	local fh = 3.4
-	local bw, bd = w - 1.6, d - 1.6
-	blk(bw, floors * fh, bd, 0, G, 0, C.glass, Enum.Material.Glass).Transparency = 0
-	for f = 1, floors do
-		noCollide(blk(bw + 0.2, 0.5, bd + 0.2, 0, G + f * fh - 0.5, 0, C.wallCool))
+	local fh = 3.3
+	local bw, bd = w - 2, d - 2
+	local lobbyH = fh * 1.4
+	-- lobby: recessed glass box behind columns
+	lit(blk(bw - 1.6, lobbyH, bd - 1.6, 0, G, 0, C.glass, Enum.Material.Glass))
+	for _, sx in { -1, 1 } do
+		for _, sz in { -1, 1 } do
+			blk(0.9, lobbyH, 0.9, sx * (bw / 2 - 0.45), G, sz * (bd / 2 - 0.45), rgb(206, 208, 210))
+		end
+		blk(0.8, lobbyH, 0.8, sx * bw * 0.18, G, -bd / 2 + 0.45, rgb(206, 208, 210))
 	end
-	blk(bw - 2, 2, bd - 2, 0, G + floors * fh, 0, C.metal)
+	noCollide(blk(bw * 0.5, 0.3, 2.2, 0, G + lobbyH - 1.1, -bd / 2 - 0.6, C.darkMetal)) -- entrance canopy
+	local base = G + lobbyH
+	local bodyH = (floors - 1) * fh
+	lit(blk(bw, bodyH, bd, 0, base, 0, rgb(58, 84, 108), Enum.Material.Glass))
+	for f = 0, floors - 1 do
+		noCollide(blk(bw + 0.25, 0.55, bd + 0.25, 0, base + f * fh, 0, rgb(214, 218, 222)))
+	end
+	for _, side in { "front", "back", "left", "right" } do
+		local f = faceOf(bw, bd, 0, 0, side)
+		local n = math.max(2, math.floor(bw / 2.6))
+		for i = 1, n - 1 do
+			onFace(f, -bw / 2 + i * bw / n, base, 0.18, bodyH, 0, 0.18, rgb(176, 182, 188))
+		end
+	end
+	local top = base + bodyH
+	noCollide(blk(bw + 0.4, 0.6, bd + 0.4, 0, top, 0, rgb(214, 218, 222)))
+	blk(bw * 0.55, 3, bd * 0.5, 0, top + 0.6, bd * 0.1, rgb(160, 166, 172)) -- plant room
+	for i = -1, 1 do
+		noCollide(blk(1.4, 0.8, 1.4, i * bw * 0.18, top + 3.6, bd * 0.1, C.darkMetal))
+	end
+	local sign = noCollide(blk(bw * 0.5, 1.4, 0.3, 0, top + 1.1, -bd / 2 + 0.6, rgb(255, 180, 54), Enum.Material.Neon))
+	sign.Name = "Sign"
+	sign:SetAttribute("Window", true)
 end
 
 Styles.school = function(w, d, _p)
@@ -2141,6 +2623,297 @@ end
 -- Public: buildings
 ---------------------------------------------------------------------------
 -- Kit vehicles get an invisible Root (physics / selection) sized to the model.
+---------------------------------------------------------------------------
+-- Farms
+---------------------------------------------------------------------------
+local SOIL = rgb(112, 82, 58)
+local SOIL_DARK = rgb(86, 62, 44)
+local WOOD = rgb(150, 112, 76)
+
+local function postFence(w: number, d: number, gate: number)
+	local h = 1.4
+	local function rail(x: number, z: number, sx: number, sz: number)
+		noCollide(blk(sx, 0.16, sz, x, G + 0.55, z, WOOD))
+		noCollide(blk(sx, 0.16, sz, x, G + 1.1, z, WOOD))
+	end
+	local hw, hd = w / 2 - 0.3, d / 2 - 0.3
+	rail(0, hd, w - 0.6, 0.16)
+	rail(-hw, 0, 0.16, d - 0.6)
+	rail(hw, 0, 0.16, d - 0.6)
+	local side = (w - 0.6 - gate) / 2
+	rail(-hw + side / 2, -hd, side, 0.16)
+	rail(hw - side / 2, -hd, side, 0.16)
+	for _, c in { { -hw, -hd }, { hw, -hd }, { -hw, hd }, { hw, hd }, { -gate / 2, -hd }, { gate / 2, -hd }, { 0, hd }, { -hw, 0 }, { hw, 0 } } do
+		noCollide(blk(0.3, h, 0.3, c[1], G, c[2], WOOD))
+	end
+end
+
+-- Ploughed field with ridges and a post-and-rail fence. Crops are added on
+-- top by ModelBuilder.crops as the field grows.
+Styles.farmField = function(w, d, _p)
+	local b = M.PrimaryPart :: BasePart
+	b.Color = SOIL
+	b.Material = Enum.Material.Ground
+	local rows = math.max(3, math.floor((w - 3) / 4))
+	local span = d - 4
+	for i = 1, rows do
+		local x = -w / 2 + 1.5 + (i - 0.5) * ((w - 3) / rows)
+		local ridge = noCollide(blk(1.6, 0.35, span, x, G, 0.4, SOIL_DARK, Enum.Material.Ground))
+		ridge.Name = "Ridge"
+	end
+	postFence(w, d, 4)
+	-- scarecrow
+	noCollide(blk(0.25, 3.4, 0.25, w / 2 - 2.2, G, -d / 2 + 2.2, WOOD))
+	noCollide(blk(2.4, 0.22, 0.22, w / 2 - 2.2, G + 2.6, -d / 2 + 2.2, WOOD))
+	noCollide(ball(0.8, w / 2 - 2.2, G + 3.6, -d / 2 + 2.2, rgb(214, 178, 120)))
+	noCollide(cyl(0.2, 1.4, w / 2 - 2.2, G + 3.95, -d / 2 + 2.2, rgb(176, 140, 70)))
+end
+
+-- Crop rows for a field at growth stage 0-3 (rebuilt as the crop grows).
+function ModelBuilder.crops(field: Model, crop: any?, stage: number): Model
+	local old = field:FindFirstChild("Crops")
+	if old then
+		old:Destroy()
+	end
+	local holder = Instance.new("Model")
+	holder.Name = "Crops"
+	local prev = M
+	M = holder
+	local base = field.PrimaryPart
+	local pivot = field:GetPivot()
+	if crop and stage > 0 and base then
+		local w, d = base.Size.X + 0.2, base.Size.Z + 0.2
+		local rows = math.max(3, math.floor((w - 3) / 4))
+		local span = d - 5
+		local frac = stage == 1 and 0.2 or (stage == 2 and 0.62 or 1)
+		local h = math.max(0.25, crop.height * frac)
+		local ripe = stage == 3
+		local clumps = 6
+		local gap = 0.7
+		local clumpLen = span / clumps - gap
+		local function noQuery(p: BasePart): BasePart
+			p.CanCollide = false
+			p.CanQuery = false
+			return p
+		end
+		for i = 1, rows do
+			local x = -w / 2 + 1.5 + (i - 0.5) * ((w - 3) / rows)
+			for k = 1, clumps do
+				local z = 0.4 - span / 2 + (k - 0.5) * (span / clumps)
+				local jitter = ((i * 7 + k * 13) % 5) * 0.06 -- slight height variety
+				local hh = h * (0.92 + jitter)
+				if crop.id == "wheat" then
+					-- dense golden carpet with a lighter top
+					local col = ripe and crop.ripe or crop.green
+					noQuery(blk(stage == 1 and 1 or 2.6, hh, clumpLen + gap * 0.6, x, G + 0.35, z, col, Enum.Material.Grass))
+					if ripe then
+						noQuery(blk(2.7, 0.25, clumpLen + gap * 0.6, x, G + 0.35 + hh, z, rgb(242, 214, 130), Enum.Material.Fabric))
+					end
+				elseif crop.id == "potatoes" then
+					-- low leafy mounds with pale flowers when ripe
+					noQuery(blk(stage == 1 and 0.8 or 1.9, hh, clumpLen, x, G + 0.35, z, ripe and crop.ripe or crop.green, Enum.Material.Grass))
+					if ripe then
+						noQuery(ball(0.4, x - 0.4, G + 0.45 + hh, z - clumpLen * 0.2, rgb(220, 204, 240)))
+						noQuery(ball(0.4, x + 0.4, G + 0.45 + hh, z + clumpLen * 0.2, rgb(220, 204, 240)))
+					end
+				else
+					-- corn / sunflowers: tall stalks, cobs or flower heads on top
+					local stalkC = ripe and crop.green:Lerp(crop.ripe, 0.3) or crop.green
+					local thick = stage == 1 and 0.5 or 0.9
+					noQuery(blk(thick, hh, clumpLen, x, G + 0.35, z, stalkC, Enum.Material.Grass))
+					if stage >= 2 then
+						noQuery(blk(1.6, hh * 0.35, clumpLen * 0.8, x, G + 0.35 + hh * 0.3, z, stalkC:Lerp(rgb(60, 110, 50), 0.3), Enum.Material.Grass)) -- leaves
+					end
+					if ripe and crop.id == "corn" then
+						noQuery(blk(0.45, 1.1, 0.45, x + 0.6, G + 0.35 + hh * 0.5, z - clumpLen * 0.25, rgb(236, 202, 92)))
+						noQuery(blk(0.45, 1.1, 0.45, x - 0.6, G + 0.35 + hh * 0.6, z + clumpLen * 0.25, rgb(236, 202, 92)))
+						noQuery(blk(0.3, 0.6, clumpLen * 0.6, x, G + 0.35 + hh, z, rgb(200, 170, 96))) -- tassels
+					elseif ripe then
+						for _, dz in { -clumpLen * 0.28, clumpLen * 0.28 } do
+							local disc = noQuery(plank(1.5, 1.5, 0.3, CFrame.new(x, G + 0.35 + hh + 0.5, z + dz) * CFrame.Angles(math.rad(-20), 0, 0), crop.ripe))
+							disc.Shape = Enum.PartType.Cylinder
+							disc.Size = Vector3.new(0.3, 1.5, 1.5)
+							disc.CFrame = CFrame.new(x, G + 0.35 + hh + 0.5, z + dz - 0.3) * CFrame.Angles(0, math.rad(90), math.rad(20))
+							noQuery(ball(0.55, x, G + 0.35 + hh + 0.5, z + dz - 0.55, rgb(96, 62, 30)))
+						end
+					end
+				end
+			end
+		end
+	end
+	for _, part in holder:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.CFrame = pivot * part.CFrame
+			part.CastShadow = false
+		end
+	end
+	M = prev
+	holder.Parent = field
+	return holder
+end
+
+-- White farmhouse with a wrap-around porch.
+Styles.farmhouse = function(w, d, _p)
+	local b = M.PrimaryPart :: BasePart
+	b.Color = C.grass
+	b.Material = Enum.Material.Grass
+	local bw, bd = w - 4, d - 5
+	local cz = 1
+	local wallC = rgb(240, 236, 224)
+	local wallH = 6.4
+	blk(bw + 0.4, 0.6, bd + 0.4, 0, G, cz, rgb(150, 140, 130))
+	blk(bw, wallH, bd, 0, G + 0.6, cz, wallC)
+	local top = G + 0.6 + wallH
+	gableRoof(bw + 1.2, bd + 1, 0, top, cz, rgb(150, 54, 48), 38)
+	blk(1, 3.6, 1, -bw * 0.25, top, cz + bd * 0.2, C.brick)
+	-- porch: deck, posts, roof
+	noCollide(blk(bw + 2.6, 0.4, 2.4, 0, G, cz - bd / 2 - 1.2, WOOD))
+	for i = 0, 4 do
+		noCollide(blk(0.25, 3.2, 0.25, -bw / 2 - 1 + i * (bw + 2) / 4, G + 0.4, cz - bd / 2 - 2.2, C.white))
+	end
+	noCollide(plank(bw + 2.8, 0.2, 2.8, CFrame.new(0, G + 3.8, cz - bd / 2 - 1.2) * CFrame.Angles(math.rad(-10), 0, 0), rgb(150, 54, 48)))
+	local front = faceOf(bw, bd, 0, cz, "front")
+	door(front, 0, G + 0.6, 1.3, 2.6, rgb(120, 60, 46), C.white)
+	for _, s in { -1, 1 } do
+		framedWindow(front, s * bw * 0.3, G + 1.8, 1.2, 1.6, C.white, rgb(64, 92, 72))
+		framedWindow(front, s * bw * 0.3, G + 4.6, 1.1, 1.3, C.white, rgb(64, 92, 72))
+	end
+	for _, side in { "left", "right", "back" } do
+		framedWindow(faceOf(bw, bd, 0, cz, side), 0, G + 2, 1.2, 1.5, C.white, nil)
+	end
+	-- water pump + tree
+	noCollide(cyl(1.6, 0.4, w / 2 - 1.2, G, -d / 2 + 1.2, C.darkMetal))
+	tree(-w / 2 + 1.4, d / 2 - 1.4, 0.8)
+end
+
+-- Classic red barn: gambrel roof, white trim, X-braced doors, hay loft.
+Styles.barn = function(w, d, _p)
+	local bw, bd = w - 2, d - 2
+	local red = rgb(164, 44, 38)
+	local trim = rgb(240, 236, 228)
+	local wallH = 6
+	blk(bw, wallH, bd, 0, G, 0, red, Enum.Material.WoodPlanks)
+	local top = G + wallH
+	-- gambrel roof: steep lower slopes, shallow upper slopes (ridge along Z)
+	local low, lowA = bw * 0.3, math.rad(62)
+	local upA = math.rad(24)
+	local xIn = bw / 2 - low * math.cos(lowA)
+	local up = xIn / math.cos(upA) + 0.2
+	local yTop = top + low * math.sin(lowA)
+	local roofC = rgb(70, 74, 80)
+	for _, s in { -1, 1 } do
+		local x1 = s * (bw / 2 - low * math.cos(lowA) / 2)
+		plank(low + 0.3, 0.3, bd + 0.8, CFrame.new(x1, top + low * math.sin(lowA) / 2, 0) * CFrame.Angles(0, 0, -s * lowA), roofC)
+		plank(up, 0.3, bd + 0.8, CFrame.new(s * (xIn - up * math.cos(upA) / 2), yTop + up * math.sin(upA) / 2, 0) * CFrame.Angles(0, 0, -s * upA), roofC)
+	end
+	-- gable infill kept inside the roof line
+	blk(xIn * 2 - 0.2, yTop - top, bd - 0.2, 0, top, 0, red, Enum.Material.WoodPlanks)
+	blk(xIn - 0.2, xIn * math.tan(upA) * 0.5, bd - 0.2, 0, yTop, 0, red, Enum.Material.WoodPlanks)
+	local front = faceOf(bw, bd, 0, 0, "front")
+	-- big doors with white X bracing
+	onFace(front, 0, G, 4.6, 4.6, -0.02, 0.1, trim)
+	for _, s in { -1, 1 } do
+		onFace(front, s * 1.12, G + 0.1, 2.1, 4.3, 0.06, 0.1, red, Enum.Material.WoodPlanks)
+		local x = s * 1.12
+		local brace = noCollide(plank(0.22, 4.6, 0.08, CFrame.new(x, G + 2.3, -bd / 2 - 0.2) * CFrame.Angles(0, 0, s * math.rad(26)), trim))
+		brace.Name = "Brace"
+		noCollide(plank(0.22, 4.6, 0.08, CFrame.new(x, G + 2.3, -bd / 2 - 0.2) * CFrame.Angles(0, 0, -s * math.rad(26)), trim))
+	end
+	onFace(front, 0, top + 0.4, 1.8, 1.8, 0, 0.1, trim) -- hay loft door
+	onFace(front, 0, top + 0.6, 1.4, 1.4, 0.08, 0.06, rgb(120, 34, 30))
+	for _, sx in { -1, 1 } do
+		noCollide(blk(0.3, wallH, 0.3, sx * bw / 2, G, -bd / 2, trim))
+	end
+	-- cupola + hay bales
+	blk(1.6, 1.4, 1.6, 0, yTop + xIn * math.tan(upA) - 0.3, 0, trim)
+	noCollide(cyl(0.8, 1.3, w / 2 - 1, G, -d / 2 + 1, rgb(214, 182, 96)))
+	noCollide(cyl(0.8, 1.3, w / 2 - 1, G + 0.8, -d / 2 + 1, rgb(220, 190, 104)))
+end
+
+-- Corrugated grain silo with a dome cap and a ladder.
+Styles.silo = function(w, _d, _p)
+	local dia = w - 2.6
+	local h = 18
+	cyl(h, dia, 0, G, 0, rgb(196, 200, 204), Enum.Material.Metal)
+	for i = 1, 4 do
+		noCollide(cyl(0.3, dia + 0.25, 0, G + i * h / 5, 0, rgb(160, 166, 172), Enum.Material.Metal))
+	end
+	local cap = ball(dia, 0, G + h, 0, rgb(176, 182, 188), Enum.Material.Metal)
+	cap.Name = "Dome"
+	noCollide(blk(0.6, h, 0.2, 0, G, -dia / 2 - 0.15, C.darkMetal))
+	noCollide(cyl(1.2, 1.6, dia / 2 + 0.6, G, 0, C.darkMetal))
+end
+
+---------------------------------------------------------------------------
+-- Barracks + helipad
+---------------------------------------------------------------------------
+Styles.barracks = function(w, d, _p)
+	local bw, bd = w - 2, d * 0.5
+	local cz = d * 0.2
+	local wallC = rgb(170, 164, 132)
+	local trim = rgb(214, 210, 188)
+	local fh = 3.4
+	blk(bw, fh * 2, bd, 0, G, cz, wallC)
+	noCollide(blk(bw + 0.4, 0.5, bd + 0.4, 0, G + fh * 2, cz, C.oliveDark))
+	local front = faceOf(bw, bd, 0, cz, "front")
+	for f = 0, 1 do
+		ribbon(front, bw - 6, G + f * fh + 1, 1.3, 2.2, trim)
+		ribbon(faceOf(bw, bd, 0, cz, "back"), bw - 2, G + f * fh + 1, 1.3, 2.2, trim)
+	end
+	-- portico entrance + flags
+	onFace(front, 0, G, 4.4, fh * 2 - 0.5, 0, 1.6, trim)
+	door(front, 0, G, 2.2, 2.8, rgb(70, 76, 60), C.darkMetal)
+	for _, s in { -1, 1 } do
+		noCollide(cyl(9, 0.22, s * 4.5, G, -d / 2 + 2.5, C.metal))
+		noCollide(blk(0.1, 1.4, 2.2, s * 4.5, G + 7.5, -d / 2 + 2.5 + 1.1, s > 0 and C.olive or rgb(200, 60, 50)))
+	end
+	-- parade ground with painted lines
+	noCollide(blk(bw, 0.05, d * 0.42, 0, G, -d * 0.24, C.asphalt))
+	for i = -2, 2 do
+		noCollide(blk(0.25, 0.06, d * 0.36, i * bw * 0.16, G, -d * 0.24, C.line))
+	end
+	-- sandbag wall + guard booth
+	for i = -2, 2 do
+		noCollide(blk(2.2, 0.9, 0.9, -w / 2 + 2 + (i + 2) * 2.3, G, -d / 2 + 0.6, rgb(176, 160, 116)))
+	end
+	blk(1.8, 2.6, 1.8, w / 2 - 1.6, G, -d / 2 + 1.4, C.oliveDark)
+	noCollide(blk(2.2, 0.2, 2.2, w / 2 - 1.6, G + 2.6, -d / 2 + 1.4, C.darkMetal))
+end
+
+Styles.helipad = function(w, d, _p)
+	local b = M.PrimaryPart :: BasePart
+	b.Color = rgb(150, 152, 150)
+	b.Material = Enum.Material.Concrete
+	local r = math.min(w, d) * 0.36
+	local cx, cz = -w * 0.08, 0
+	local disc = noCollide(cyl(0.08, r * 2, cx, G, cz, rgb(70, 74, 76)))
+	disc.Name = "Pad"
+	noCollide(cyl(0.1, r * 2 - 1.2, cx, G, cz, rgb(70, 74, 76)))
+	local ring = noCollide(cyl(0.09, r * 2 - 0.4, cx, G, cz, rgb(236, 236, 230)))
+	ring.Name = "Ring"
+	noCollide(cyl(0.1, r * 2 - 1.4, cx, G + 0.01, cz, rgb(70, 74, 76)))
+	-- the H
+	noCollide(blk(0.9, 0.06, r * 0.9, cx - r * 0.3, G + 0.1, cz, C.white))
+	noCollide(blk(0.9, 0.06, r * 0.9, cx + r * 0.3, G + 0.1, cz, C.white))
+	noCollide(blk(r * 0.6, 0.06, 0.9, cx, G + 0.1, cz, C.white))
+	-- edge lights glow at night
+	for i = 0, 7 do
+		local a = i * math.pi / 4
+		local light = noCollide(cyl(0.3, 0.5, cx + math.sin(a) * (r + 0.6), G, cz + math.cos(a) * (r + 0.6), rgb(255, 210, 120), Enum.Material.Neon))
+		light.Name = "PadLight"
+	end
+	-- control tower + fuel tank + windsock
+	local tx = w / 2 - 3
+	blk(3.6, 6, 3.6, tx, G, -d / 2 + 3, rgb(176, 172, 150))
+	lit(blk(4, 1.8, 4, tx, G + 6, -d / 2 + 3, C.glass, Enum.Material.Glass))
+	noCollide(blk(4.4, 0.4, 4.4, tx, G + 7.8, -d / 2 + 3, C.darkMetal))
+	noCollide(cyl(3, 0.2, tx + 1, G + 8.2, -d / 2 + 3, C.metal))
+	cyl(3.2, 3.4, tx, G, d / 2 - 3, rgb(226, 228, 220))
+	noCollide(cyl(7, 0.2, -w / 2 + 1.2, G, -d / 2 + 1.2, C.metal))
+	local sock = noCollide(plank(0.7, 0.7, 2.4, CFrame.new(-w / 2 + 1.2, G + 6.4, -d / 2 + 2.4), rgb(240, 120, 40)))
+	sock.Name = "Windsock"
+end
+
 local function kitWithRoot(name: string, length: number, centered: boolean): Model?
 	local kit = AssetLibrary.instantiate(name, { length = length })
 	if not kit then
@@ -2176,7 +2949,7 @@ local function kitWithRoot(name: string, length: number, centered: boolean): Mod
 	return kit
 end
 
-local UNIT_LENGTH = { truck = 8, ifv = 9, tank = 10, mlrs = 9.6, spaag = 9 }
+local UNIT_LENGTH = { truck = 9.4, ifv = 9, tank = 10, mlrs = 9.6, spaag = 9, humvee = 9.4, squad = 6, blackhawk = 17, chinook = 22 }
 
 -- True when the Blender kit has been imported into ReplicatedStorage.Assets.
 function ModelBuilder.usingKit(): boolean
@@ -2229,16 +3002,6 @@ end
 
 local UnitStyles: { [string]: (p: { [string]: any }, col: Color3) -> () } = {}
 
-UnitStyles.truck = function(_p, col)
-	root(3.6, 3.4, 8)
-	blk(3.2, 2.4, 2.4, 0, 0.8, -2.6, col)
-	lit(blk(2.8, 0.8, 0.15, 0, 2.1, -3.82, C.window))
-	blk(3.4, 2.6, 5, 0, 0.8, 1.2, rgb(120, 126, 98))
-	wheelPair(0, 0.75, -2.6, 3.3, 1.5)
-	wheelPair(0, 0.75, 0.6, 3.3, 1.5)
-	wheelPair(0, 0.75, 2.6, 3.3, 1.5)
-end
-
 UnitStyles.ifv = function(p, col)
 	root(4.4, 3.6, 9)
 	if p.wheeled then
@@ -2288,6 +3051,356 @@ UnitStyles.spaag = function(_p, col)
 	axleCyl(3.6, 0.3, CFrame.new(-1.7, 3, -1.6) * CFrame.Angles(0, math.rad(90), 0), C.darkMetal)
 	axleCyl(3.6, 0.3, CFrame.new(1.7, 3, -1.6) * CFrame.Angles(0, math.rad(90), 0), C.darkMetal)
 	plank(2, 1.4, 0.2, CFrame.new(0, 4.4, 1.6), C.white)
+end
+
+---------------------------------------------------------------------------
+-- Infantry: classic Roblox (R6) soldiers with distinct kit
+---------------------------------------------------------------------------
+local SKIN = { rgb(234, 184, 146), rgb(204, 142, 105), rgb(160, 106, 74), rgb(114, 74, 52), rgb(242, 204, 170) }
+
+type Kit = { shirt: Color3, pants: Color3, vest: Color3, helmet: Color3, gear: Color3, style: string }
+
+local function kitFor(p: { [string]: any }): Kit
+	if p.eastern then
+		return { shirt = rgb(92, 104, 70), pants = rgb(84, 96, 64), vest = rgb(70, 82, 56), helmet = rgb(78, 92, 60), gear = rgb(52, 60, 42), style = "eastern" }
+	elseif p.european then
+		return { shirt = rgb(196, 178, 136), pants = rgb(176, 160, 120), vest = rgb(150, 132, 96), helmet = rgb(184, 166, 124), gear = rgb(110, 96, 70), style = "european" }
+	elseif p.kit == "recon" then
+		return { shirt = rgb(84, 96, 66), pants = rgb(70, 80, 56), vest = rgb(96, 110, 70), helmet = rgb(96, 104, 72), gear = rgb(58, 64, 46), style = "recon" }
+	end
+	return { shirt = rgb(112, 118, 86), pants = rgb(98, 104, 76), vest = rgb(150, 138, 102), helmet = rgb(104, 112, 82), gear = rgb(60, 64, 52), style = "standard" }
+end
+
+-- Motor6D from part0 to part1 at a world joint position (for animated limbs / rotors).
+local function joint(name: string, part0: BasePart, part1: BasePart, at: CFrame): Motor6D
+	local m = Instance.new("Motor6D")
+	m.Name = name
+	m.Part0 = part0
+	m.Part1 = part1
+	m.C0 = part0.CFrame:Inverse() * at
+	m.C1 = part1.CFrame:Inverse() * at
+	m.Parent = part0
+	part1:SetAttribute("Jointed", true)
+	return m
+end
+
+-- One soldier standing at (x, z), facing -Z. s = scale (1 = a normal R6 character).
+local function soldier(x: number, z: number, s: number, kit: Kit, weapon: string, skin: Color3)
+	local sub = Instance.new("Model")
+	sub.Name = "Soldier"
+	sub:SetAttribute("Soldier", true)
+	sub.Parent = M
+	local prev = M
+	M = sub
+	local function part(name: string, sx: number, sy: number, sz: number, cf: CFrame, color: Color3, material: Enum.Material?): Part
+		local p = plank(sx * s, sy * s, sz * s, cf, color, material)
+		p.Name = name
+		return p
+	end
+	local function at(lx: number, ly: number, lz: number): CFrame
+		return CFrame.new(x + lx * s, ly * s, z + lz * s)
+	end
+	local torso = part("Torso", 2, 2, 1, at(0, 3, 0), kit.shirt)
+	local legL = part("Left Leg", 1, 2, 1, at(-0.5, 1, 0), kit.pants)
+	local legR = part("Right Leg", 1, 2, 1, at(0.5, 1, 0), kit.pants)
+	joint("LeftHip", torso, legL, at(-0.5, 2, 0)):SetAttribute("Swing", 1)
+	joint("RightHip", torso, legR, at(0.5, 2, 0)):SetAttribute("Swing", -1)
+	-- boots
+	part("Boot", 1.02, 0.45, 1.05, at(-0.5, 0.22, -0.02), rgb(40, 36, 30)):SetAttribute("WeldTo", "Left Leg")
+	part("Boot", 1.02, 0.45, 1.05, at(0.5, 0.22, -0.02), rgb(40, 36, 30)):SetAttribute("WeldTo", "Right Leg")
+	-- head: the classic Roblox head mesh + face
+	local head = part("Head", 2, 1, 1, at(0, 4.5, 0), skin)
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Head
+	mesh.Scale = Vector3.new(1.25, 1.25, 1.25)
+	mesh.Parent = head
+	local face = Instance.new("Decal")
+	face.Name = "face"
+	face.Texture = "rbxasset://textures/face.png"
+	face.Face = Enum.NormalId.Front
+	face.Parent = head
+	-- arms raised to hold the weapon (posed, welded)
+	local aim = weapon == "at" and 0.35 or 0.9
+	part("Right Arm", 1, 2, 1, at(1.5, 3.25, -0.5) * CFrame.Angles(math.rad(70), 0, math.rad(-8)), kit.shirt)
+	part("Left Arm", 1, 2, 1, at(-1.25, 3.25, -0.65) * CFrame.Angles(math.rad(80), math.rad(-25), math.rad(10)), kit.shirt)
+	-- plate carrier with pouches + radio
+	part("Vest", 2.15, 1.5, 1.25, at(0, 3.25, 0), kit.vest, Enum.Material.Fabric)
+	for i = -1, 1 do
+		part("Pouch", 0.5, 0.55, 0.3, at(i * 0.62, 2.85, -0.75), kit.gear, Enum.Material.Fabric)
+	end
+	part("Radio", 0.6, 0.9, 0.4, at(0.45, 3.2, 0.82), kit.gear)
+	part("Antenna", 0.08, 1.6, 0.08, at(0.62, 4.2, 0.9), C.black)
+	-- headgear
+	if kit.style == "recon" then
+		part("Brim", 2, 0.12, 2, at(0, 5.1, 0), kit.helmet, Enum.Material.Fabric)
+		part("Hat", 1.45, 0.5, 1.45, at(0, 5.35, 0), kit.helmet, Enum.Material.Fabric)
+		part("Ghillie", 2.4, 0.6, 1.5, at(0, 4, 0.1), rgb(86, 104, 58), Enum.Material.Grass)
+	else
+		local helmet = part("Helmet", 1.55, 1.05, 1.6, at(0, 5.05, 0.02), kit.helmet)
+		local dome = Instance.new("SpecialMesh")
+		dome.MeshType = Enum.MeshType.Sphere
+		dome.Parent = helmet
+		if kit.style == "standard" then
+			part("NVGMount", 0.45, 0.35, 0.2, at(0, 5.25, -0.82), C.black)
+			part("Goggles", 1.4, 0.25, 0.2, at(0, 5.4, -0.55), rgb(30, 30, 34))
+		elseif kit.style == "eastern" then
+			part("EarPro", 1.75, 0.55, 0.6, at(0, 4.55, 0), kit.gear)
+			part("Visor", 1.3, 0.3, 0.15, at(0, 5.1, -0.82), rgb(40, 44, 38))
+		else
+			part("Band", 1.6, 0.18, 1.62, at(0, 4.9, 0.02), rgb(70, 60, 44))
+			part("Glasses", 1.1, 0.22, 0.12, at(0, 4.7, -0.62), rgb(30, 30, 34))
+		end
+	end
+	-- weapon
+	if weapon == "at" then
+		local tube = axleCyl(4.6 * s, 0.6 * s, at(0.9, 4.6, 0.2) * CFrame.Angles(0, math.rad(90), 0), rgb(76, 90, 60))
+		tube.Name = "Launcher"
+		axleCyl(0.9 * s, 0.8 * s, at(0.9, 4.6, -2) * CFrame.Angles(0, math.rad(90), 0), rgb(60, 70, 48)).Name = "Warhead"
+	else
+		local len = weapon == "recon" and 3.4 or 2.6
+		part("Rifle", 0.28, 0.42, len, at(0.3, 3.55, -1.3) * CFrame.Angles(math.rad(-aim * 10), 0, 0), rgb(38, 40, 40))
+		part("Magazine", 0.22, 0.6, 0.35, at(0.3, 3.15, -1.15), rgb(38, 40, 40))
+		part("Optic", 0.22, 0.25, 0.6, at(0.3, 3.88, -1.15), rgb(24, 24, 26))
+	end
+	part("Pack", 1.6, 1.6, 0.7, at(0, 3.05, 0.95), kit.gear, Enum.Material.Fabric)
+	M = prev
+end
+
+-- A squad unit: invisible root plus 2-4 soldiers in a loose wedge.
+UnitStyles.squad = function(p, _col)
+	local s = 0.72
+	root(6, 5.2 * s, 6)
+	local kit = kitFor(p)
+	local count = p.count or 4
+	local spots = { { 0, -1.8 }, { -1.9, 0.4 }, { 1.9, 0.6 }, { 0, 2.4 } }
+	for i = 1, count do
+		local spot = spots[i]
+		soldier(spot[1], spot[2], s, kit, p.kit or "rifle", SKIN[(i + (p.eastern and 1 or 0)) % #SKIN + 1])
+	end
+end
+
+---------------------------------------------------------------------------
+-- Transports
+---------------------------------------------------------------------------
+UnitStyles.humvee = function(p, col)
+	local body = p.eastern and C.eastern or (p.european and C.european or rgb(176, 160, 120))
+	root(4.8, 4.6, 9.4)
+	blk(4.5, 1.3, 9, 0, 0.9, 0, body) -- hull
+	plank(4.3, 0.5, 3.2, CFrame.new(0, 2.45, -2.9) * CFrame.Angles(math.rad(-6), 0, 0), body) -- hood
+	noCollide(blk(3.4, 0.3, 0.2, 0, 1.4, -4.55, C.darkMetal)) -- grille
+	for _, sx in { -1, 1 } do
+		lit(blk(0.5, 0.35, 0.12, sx * 1.6, 1.85, -4.56, rgb(255, 236, 190)))
+	end
+	blk(4.3, 1.5, 3.8, 0, 2.2, 0.4, body) -- cabin
+	lit(blk(3.9, 0.8, 0.12, 0, 2.75, -1.52, C.window)) -- windscreen
+	for _, sx in { -1, 1 } do
+		lit(blk(0.12, 0.7, 2.8, sx * 2.16, 2.75, 0.4, C.window))
+	end
+	blk(4.3, 0.9, 2.4, 0, 2.2, 3.4, body) -- rear bed
+	-- roof turret: ring, gun shield, machine gun
+	noCollide(cyl(0.35, 2.2, 0, 3.7, 0.6, C.darkMetal))
+	noCollide(blk(1.8, 1, 0.15, 0, 4.05, -0.3, body))
+	axleCyl(2.4, 0.2, CFrame.new(0, 4.4, -1.2) * CFrame.Angles(0, math.rad(90), 0), C.black)
+	for _, z in { -2.9, 2.9 } do
+		wheelPair(0, 0.95, z, 4.6, 1.9)
+	end
+	noCollide(blk(0.12, 2, 0.12, -1.9, 3.7, 2.8, C.black)) -- whip antenna
+	local _ = col
+end
+
+UnitStyles.truck = function(_p, col)
+	root(3.8, 4.4, 9.4)
+	blk(3.4, 0.6, 9, 0, 0.6, 0.2, C.darkMetal) -- chassis
+	blk(3.4, 2.4, 2.6, 0, 1.2, -3.1, col) -- cab
+	lit(blk(3.0, 0.9, 0.15, 0, 2.5, -4.42, C.window))
+	for _, sx in { -1, 1 } do
+		lit(blk(0.15, 0.8, 1.4, sx * 1.72, 2.5, -3.4, C.window))
+	end
+	noCollide(blk(2.8, 0.4, 0.2, 0, 1.4, -4.42, C.darkMetal))
+	-- canvas-covered cargo bed with hoops
+	blk(3.6, 0.8, 5.6, 0, 1.2, 1.5, rgb(110, 116, 90))
+	blk(3.6, 2, 5.6, 0, 2, 1.5, rgb(122, 128, 96), Enum.Material.Fabric)
+	for i = 0, 3 do
+		noCollide(blk(3.7, 0.15, 0.2, 0, 4, -1.1 + i * 1.73, rgb(98, 104, 78)))
+	end
+	noCollide(cyl(0.5, 1.5, 0, 0.5, 4.45, C.black)).CFrame = CFrame.new(0, 1.3, 4.45) * CFrame.Angles(math.rad(90), 0, 0) -- spare tyre
+	wheelPair(0, 0.8, -3.1, 3.5, 1.6)
+	wheelPair(0, 0.8, 0.9, 3.5, 1.6)
+	wheelPair(0, 0.8, 2.7, 3.5, 1.6)
+end
+
+---------------------------------------------------------------------------
+-- Helicopters (rotors are jointed so the client can spin them)
+---------------------------------------------------------------------------
+-- Hub + blades; the hub is jointed to the root and spins around its local Y
+-- (turn hubAt to spin around another axis, e.g. a tail rotor).
+local function rotor(name: string, hubAt: CFrame, blades: number, len: number, color: Color3, spin: number, r: BasePart): BasePart
+	local hub = plank(0.9, 0.5, 0.9, hubAt, C.darkMetal)
+	hub.Name = name
+	for i = 1, blades do
+		local a = (i - 1) * (math.pi * 2 / blades)
+		local blade = plank(0.7, 0.12, len, hubAt * CFrame.Angles(0, a, 0) * CFrame.new(0, 0.1, -len / 2), color)
+		blade.Name = "Blade"
+		blade:SetAttribute("WeldTo", name)
+		blade.CastShadow = false
+	end
+	joint(name .. "Joint", r, hub, hubAt):SetAttribute("Spin", spin)
+	return hub
+end
+
+UnitStyles.blackhawk = function(p, _col)
+	local body = p.eastern and rgb(86, 98, 72) or rgb(56, 62, 52)
+	local r = root(5, 5, 17)
+	blk(3.8, 3, 7.6, 0, 1, -0.6, body) -- cabin
+	plank(3.6, 2.4, 2.8, CFrame.new(0, 2.1, -5.4) * CFrame.Angles(math.rad(-18), 0, 0), body) -- nose
+	lit(plank(3.4, 1.4, 1.8, CFrame.new(0, 3.05, -5.25) * CFrame.Angles(math.rad(-38), 0, 0), C.glass))
+	for _, sx in { -1, 1 } do
+		lit(blk(0.12, 1.2, 1.8, sx * 1.92, 2.6, -3.3, C.glass)) -- cockpit side
+		blk(0.12, 1.6, 2, sx * 1.92, 1.6, 0.2, rgb(40, 44, 38)) -- open door
+		noCollide(axleCyl(1.6, 0.18, CFrame.new(sx * 2.2, 2.2, 0.2) * CFrame.Angles(0, math.rad(90), 0) * CFrame.Angles(0, 0, 0), C.black)) -- door gun
+	end
+	blk(2.6, 1, 4.2, 0, 4, -0.8, body) -- engine deck
+	noCollide(cyl(0.9, 0.5, 0, 5, -0.8, C.darkMetal)) -- mast
+	blk(1.2, 1.2, 8.6, 0, 2.6, 7.2, body) -- tail boom
+	plank(0.3, 3, 1.8, CFrame.new(0, 4.4, 11.2) * CFrame.Angles(math.rad(-20), 0, 0), body) -- fin
+	blk(3.8, 0.18, 1.1, 0, 2.9, 10.4, body) -- stabiliser
+	for _, sx in { -1, 1 } do
+		noCollide(axleCyl(0.45, 0.8, CFrame.new(sx * 1.4, 0.4, -3.6), C.black)) -- wheels
+	end
+	noCollide(axleCyl(0.3, 0.5, CFrame.new(0, 1.5, 11.1), C.black))
+	rotor("MainRotor", CFrame.new(0, 5.5, -0.8), 4, 8.6, rgb(40, 42, 40), 18, r)
+	rotor("TailRotor", CFrame.new(0.4, 5.2, 11.8) * CFrame.Angles(0, 0, math.rad(90)), 2, 1.6, rgb(40, 42, 40), 40, r)
+end
+
+UnitStyles.chinook = function(p, _col)
+	local body = p.eastern and rgb(86, 98, 72) or rgb(92, 98, 76)
+	local r = root(5.6, 7, 22)
+	blk(4.6, 4.2, 15.6, 0, 0.7, 0.4, body) -- fuselage
+	plank(4.4, 3.4, 2.6, CFrame.new(0, 2.4, -8.3) * CFrame.Angles(math.rad(-14), 0, 0), body) -- nose
+	lit(plank(4.2, 1.2, 1.6, CFrame.new(0, 3.95, -8.4) * CFrame.Angles(math.rad(-40), 0, 0), C.glass))
+	plank(4.4, 0.3, 3.2, CFrame.new(0, 1.3, 9.4) * CFrame.Angles(math.rad(28), 0, 0), body) -- rear ramp
+	for _, sx in { -1, 1 } do
+		blk(1, 1.5, 9.5, sx * 2.75, 0.9, 0.6, body) -- sponsons
+		for i = 0, 4 do
+			lit(blk(0.12, 0.7, 0.7, sx * 2.32, 3.2, -5 + i * 2.2, C.window))
+		end
+		noCollide(axleCyl(0.5, 1, CFrame.new(sx * 2.4, 0.5, -5.4), C.black))
+		noCollide(axleCyl(0.5, 1, CFrame.new(sx * 2.9, 0.5, 4.2), C.black))
+	end
+	blk(1.8, 1.4, 2.4, 0, 4.9, -6.8, body) -- front pylon
+	blk(2.4, 3.2, 3.6, 0, 4.9, 7.4, body) -- rear pylon
+	blk(1.6, 0.9, 6, 0, 4.9, 1, rgb(80, 86, 66)) -- spine
+	rotor("FrontRotor", CFrame.new(0, 6.7, -7), 3, 9.6, rgb(40, 42, 40), 15, r)
+	rotor("RearRotor", CFrame.new(0, 8.5, 7.6), 3, 9.6, rgb(40, 42, 40), -15, r)
+end
+
+---------------------------------------------------------------------------
+-- Forward Operating Base (built on the battlefield)
+---------------------------------------------------------------------------
+function ModelBuilder.fob(color: Color3?): Model
+	local model = Instance.new("Model")
+	model.Name = "FOB"
+	M = model
+	local size = 64
+	local half = size / 2
+	local gravel = blk(size, 0.4, size, 0, 0, 0, rgb(168, 156, 130), Enum.Material.Slate)
+	gravel.Name = "Base"
+	model.PrimaryPart = gravel
+	local hesco = rgb(196, 176, 130)
+	local seg = 9.6
+	for _, side in { "front", "back", "left", "right" } do
+		local n = math.floor(size / seg)
+		for i = 0, n - 1 do
+			local along = -half + seg / 2 + i * seg
+			if not (side == "front" and math.abs(along) < seg) then
+				local x, z, sx, sz
+				if side == "front" or side == "back" then
+					x, z, sx, sz = along, (side == "front" and -half or half), seg - 0.2, 3.2
+				else
+					x, z, sx, sz = (side == "left" and -half or half), along, 3.2, seg - 0.2
+				end
+				local wall = blk(sx, 3.4, sz, x, G, z, hesco, Enum.Material.Fabric)
+				wall.Name = "Hesco"
+			end
+		end
+	end
+	-- watchtower at the back-left corner
+	local tx, tz = -half + 5, half - 5
+	for _, c in { { -1.5, -1.5 }, { 1.5, -1.5 }, { -1.5, 1.5 }, { 1.5, 1.5 } } do
+		blk(0.4, 8, 0.4, tx + c[1], G, tz + c[2], WOOD)
+	end
+	blk(4.4, 0.4, 4.4, tx, G + 8, tz, WOOD)
+	blk(4.4, 1.2, 4.4, tx, G + 8.4, tz, rgb(176, 160, 116), Enum.Material.Fabric)
+	noCollide(blk(5, 0.3, 5, tx, G + 11, tz, C.oliveDark))
+	for _, c in { { -2, -2 }, { 2, -2 } } do
+		noCollide(blk(0.2, 2.6, 0.2, tx + c[1], G + 8.4, tz + c[2], WOOD))
+	end
+	-- tents
+	for i, x in { -12, 2 } do
+		local z = 6 + (i - 1) * 2
+		blk(10, 2.6, 6, x, G, z, rgb(96, 108, 76), Enum.Material.Fabric)
+		gableRoof(10.6, 6.4, x, G + 2.6, z, rgb(86, 98, 68), 30)
+	end
+	-- command container + mast
+	blk(7, 3, 3, 14, G, 14, rgb(110, 118, 92))
+	noCollide(cyl(12, 0.3, 17, G + 3, 15, C.metal))
+	noCollide(plank(2, 0.2, 2, CFrame.new(17, G + 15, 15) * CFrame.Angles(math.rad(-30), 0, 0), C.white))
+	-- helipad
+	local hx, hz = 10, -12
+	noCollide(cyl(0.1, 18, hx, G, hz, rgb(86, 88, 86)))
+	noCollide(cyl(0.12, 16.6, hx, G, hz, rgb(236, 236, 230)))
+	noCollide(cyl(0.14, 15.4, hx, G, hz, rgb(86, 88, 86)))
+	noCollide(blk(0.8, 0.06, 7, hx - 2.2, G + 0.14, hz, C.white))
+	noCollide(blk(0.8, 0.06, 7, hx + 2.2, G + 0.14, hz, C.white))
+	noCollide(blk(4.4, 0.06, 0.8, hx, G + 0.14, hz, C.white))
+	-- supply crates
+	for i = 0, 5 do
+		local cx, cz = -18 + (i % 3) * 2.6, -14 + math.floor(i / 3) * 2.6
+		blk(2.3, 2, 2.3, cx, G, cz, i % 2 == 0 and rgb(112, 120, 82) or rgb(150, 116, 74))
+	end
+	blk(2.3, 2, 2.3, -15.4, G + 2, -14, rgb(112, 120, 82))
+	-- sandbag nests at the gate
+	for _, s in { -1, 1 } do
+		noCollide(blk(4, 1.4, 1.4, s * 7, G, -half - 2.6, rgb(176, 160, 116), Enum.Material.Fabric))
+	end
+	-- floodlights (glow at night) + flag in the owner's colour
+	for _, c in { { -half + 2, -half + 2 }, { half - 2, -half + 2 }, { half - 2, half - 2 } } do
+		noCollide(cyl(7, 0.3, c[1], G, c[2], C.metal))
+		local lamp = noCollide(blk(1, 0.6, 1, c[1], G + 7, c[2], rgb(255, 230, 180), Enum.Material.Neon))
+		lamp.Transparency = 1
+		lamp:SetAttribute("NightGlow", true)
+	end
+	noCollide(cyl(12, 0.3, -4, G, -half + 6, C.metal))
+	local flag = noCollide(blk(0.12, 2.4, 4, -4, G + 9.4, -half + 8, color or C.olive))
+	flag.Name = "Flag"
+	for _, part in model:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.Anchored = true
+		end
+	end
+	return model
+end
+
+-- Extra preview models for tools/export_parts.luau (FOB, crops at each stage).
+function ModelBuilder.extras(): { [string]: () -> Model }
+	local Crops = require(script.Parent.Catalog.Crops)
+	local Buildings = require(script.Parent.Catalog.Buildings)
+	local out: { [string]: () -> Model } = {
+		fob = function()
+			return ModelBuilder.fob(Color3.fromRGB(64, 140, 230))
+		end,
+	}
+	local fieldDef = Buildings.get("farm_field")
+	for _, crop in Crops.all() do
+		for _, stage in { 1, 2, 3 } do
+			out[("field_%s_%d"):format(crop.id, stage)] = function()
+				local m = ModelBuilder.building(fieldDef :: any)
+				ModelBuilder.crops(m, crop, stage)
+				return m
+			end
+		end
+	end
+	return out
 end
 
 function ModelBuilder.unit(def: { id: string, model: string, params: { [string]: any }? }): Model
@@ -2619,7 +3732,7 @@ return ModelBuilder
 ]]></string>
         </Properties>
       </Item>
-      <Item class="ModuleScript" referent="19">
+      <Item class="ModuleScript" referent="20">
         <Properties>
           <string name="Name">Net</string>
           <string name="Source"><![CDATA[--[[
@@ -2660,6 +3773,10 @@ Net.Functions = {
 	"RedeemCode",
 	"SetBillboard",
 	"SetNation",
+	"UnitOrder",
+	"FarmAction",
+	"HarvestAll",
+	"SellFood",
 	"GetSnapshot",
 	"StudioPurchase",
 }
@@ -2760,11 +3877,11 @@ return Net
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="20">
+      <Item class="Folder" referent="21">
         <Properties>
           <string name="Name">Util</string>
         </Properties>
-        <Item class="ModuleScript" referent="21">
+        <Item class="ModuleScript" referent="22">
           <Properties>
             <string name="Name">Ballistics</string>
             <string name="Source"><![CDATA[--[[
@@ -2808,7 +3925,7 @@ return Ballistics
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="22">
+        <Item class="ModuleScript" referent="23">
           <Properties>
             <string name="Name">Flag</string>
             <string name="Source"><![CDATA[--[[
@@ -2978,7 +4095,7 @@ return Flag
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="23">
+        <Item class="ModuleScript" referent="24">
           <Properties>
             <string name="Name">Footprint</string>
             <string name="Source"><![CDATA[--[[
@@ -3147,7 +4264,7 @@ return Footprint
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="24">
+        <Item class="ModuleScript" referent="25">
           <Properties>
             <string name="Name">Format</string>
             <string name="Source"><![CDATA[--[[
@@ -3239,7 +4356,7 @@ return Format
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="25">
+        <Item class="ModuleScript" referent="26">
           <Properties>
             <string name="Name">Grid</string>
             <string name="Source"><![CDATA[--[[
@@ -3408,7 +4525,7 @@ return Grid
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="26">
+        <Item class="ModuleScript" referent="27">
           <Properties>
             <string name="Name">Rank</string>
             <string name="Source"><![CDATA[--[[
@@ -3455,7 +4572,7 @@ return Rank
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="27">
+        <Item class="ModuleScript" referent="28">
           <Properties>
             <string name="Name">Unlocks</string>
             <string name="Source"><![CDATA[--[[
@@ -3489,15 +4606,15 @@ return Unlocks
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="28">
+  <Item class="ServerScriptService" referent="29">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="29">
+    <Item class="Folder" referent="30">
       <Properties>
         <string name="Name">Server</string>
       </Properties>
-      <Item class="Script" referent="30">
+      <Item class="Script" referent="31">
         <Properties>
           <string name="Name">Main</string>
           <token name="RunContext">0</token>
@@ -3531,6 +4648,8 @@ local S = {
 	MonetizationService = require(Services.MonetizationService),
 	RewardService = require(Services.RewardService),
 	NationService = require(Services.NationService),
+	FobService = require(Services.FobService),
+	FarmService = require(Services.FarmService),
 	WorldService = require(Services.WorldService),
 }
 
@@ -3545,6 +4664,8 @@ local ORDER = {
 	"ResearchService",
 	"UnitService",
 	"ConquestService",
+	"FobService",
+	"FarmService",
 	"CombatService",
 	"MonetizationService",
 	"RewardService",
@@ -3625,6 +4746,7 @@ local function onLoaded(player: Player, data: { [string]: any })
 		shieldUntil = data.FirstJoin + Config.NewPlayerShield,
 		undo = {},
 		units = {},
+		fobs = {},
 		nextUnitUid = 1,
 		sent = {},
 		ready = false,
@@ -3645,6 +4767,7 @@ local function onLoaded(player: Player, data: { [string]: any })
 	end
 	S.EconomyService.compute(n, 0)
 	S.UnitService.loadNation(n)
+	S.FobService.loadNation(n)
 	S.RewardService.onJoin(n)
 	S.NationService.onJoin(n)
 	n.ready = true
@@ -3657,6 +4780,7 @@ S.DataService.beforeSave(function(player, _data)
 	if n and n.ready then
 		S.BuildService.serialize(n)
 		S.UnitService.serialize(n)
+		S.FobService.serialize(n)
 	end
 end)
 
@@ -3678,6 +4802,7 @@ Players.PlayerRemoving:Connect(function(player)
 	if n then
 		n.ready = false
 		S.UnitService.clearNation(n)
+		S.FobService.clearNation(n)
 		Nations.remove(player)
 	end
 	S.PlotService.release(player)
@@ -3699,11 +4824,11 @@ print(("[%s] server ready"):format(Config.GameName))
 ]]></string>
         </Properties>
       </Item>
-      <Item class="Folder" referent="31">
+      <Item class="Folder" referent="32">
         <Properties>
           <string name="Name">Services</string>
         </Properties>
-        <Item class="ModuleScript" referent="32">
+        <Item class="ModuleScript" referent="33">
           <Properties>
             <string name="Name">BuildService</string>
             <string name="Source"><![CDATA[--[[
@@ -3889,6 +5014,9 @@ local function spawnModel(n: Nation, b: BRuntime)
 	model.Parent = n.folder
 	b.model = model
 	applyBillboard(n, b)
+	if b.def.farm then
+		S.FarmService.attach(n, b)
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -4100,6 +5228,12 @@ function BuildService.loadNation(n: Nation)
 				b.oil = s.o or 0
 				b.fuel = s.fu or 0
 				b.dest = s.de or 0
+				if def.farm then
+					b.crop = type(s.cr) == "string" and s.cr or nil
+					b.growth = type(s.gr) == "number" and math.clamp(s.gr, 0, 1) or 0
+					b.auto = s.ar == true
+					b.lastCrop = type(s.lc) == "string" and s.lc or nil
+				end
 				if s.q then
 					for _, q in s.q do
 						table.insert(b.queue, { id = q.id, kind = q.k, progress = q.p or 0, started = q.s == true })
@@ -4151,6 +5285,10 @@ function BuildService.serialize(n: Nation)
 			z = b.z,
 			a = b.r,
 			L = b.len,
+			cr = b.crop,
+			gr = b.crop and math.floor((b.growth or 0) * 1000) / 1000 or nil,
+			ar = b.auto or nil,
+			lc = b.lastCrop,
 			f = b.finishAt,
 			st = b.startAt,
 			d = b.damaged or nil,
@@ -4506,7 +5644,7 @@ return BuildService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="33">
+        <Item class="ModuleScript" referent="34">
           <Properties>
             <string name="Name">CombatService</string>
             <string name="Source"><![CDATA[--[[
@@ -4663,6 +5801,7 @@ local function impact(attacker: Nation, weapon, target: Vector3, defender: Natio
 			dealtTotal += weapon.damage
 			S.UnitService.damage(u, weapon.damage * falloff(flatDist(u.root.CFrame.Position, target)), attacker)
 		end
+		S.FobService.damageNear(target, weapon.radius, weapon.damage * 2, attacker)
 		local point = S.ConquestService.pointNear(target, weapon.radius)
 		if point then
 			-- warheads are very effective against garrisons
@@ -4833,7 +5972,7 @@ return CombatService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="34">
+        <Item class="ModuleScript" referent="35">
           <Properties>
             <string name="Name">ConquestService</string>
             <string name="Source"><![CDATA[--[[
@@ -5262,7 +6401,7 @@ return ConquestService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="35">
+        <Item class="ModuleScript" referent="36">
           <Properties>
             <string name="Name">DataService</string>
             <string name="Source"><![CDATA[--[[
@@ -5312,7 +6451,9 @@ local function template(): { [string]: any }
 		Units = {},
 		Oil = 0,
 		Steel = 0,
-		Stats = { Hits = 0, Launches = 0, Captures = 0, Kills = 0, TotalEarned = 0, PlayTime = 0 },
+		Food = 0,
+		Fobs = {},
+		Stats = { Hits = 0, Launches = 0, Captures = 0, Kills = 0, TotalEarned = 0, PlayTime = 0, Harvests = 0 },
 		Pvp = false,
 		FirstJoin = 0,
 		LastOnline = 0,
@@ -5557,7 +6698,7 @@ return DataService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="36">
+        <Item class="ModuleScript" referent="37">
           <Properties>
             <string name="Name">EconomyService</string>
             <string name="Source"><![CDATA[--[[
@@ -5666,6 +6807,7 @@ function EconomyService.compute(n: Nation, dt: number)
 	local services = { Leisure = 0, Commerce = 0, Education = 0, Health = 0 }
 	local pollution, upkeep, damaged, constructing = 0, 0, 0, 0
 	local oilCap, steelCap = Config.BaseResourceCap, Config.BaseResourceCap
+	local foodCap = Config.FoodBaseCap
 	local depotCap = 0
 
 	for _, b in n.buildings do
@@ -5719,6 +6861,7 @@ function EconomyService.compute(n: Nation, dt: number)
 			if def.storage then
 				oilCap += def.storage.oil or 0
 				steelCap += def.storage.steel or 0
+				foodCap += def.storage.food or 0
 			end
 			if def.depot then
 				depotCap += def.depot
@@ -5751,6 +6894,9 @@ function EconomyService.compute(n: Nation, dt: number)
 	happiness -= math.min(25, pollution * 0.6)
 	happiness -= (1 - pr) * 20 + (1 - wtr) * 20
 	happiness -= math.min(15, damaged * 2)
+	if n.stats.fed then
+		happiness += Config.WellFedHappiness
+	end
 	if pop < 150 then
 		happiness += 10 -- small towns are forgiving so new players grow fast
 	end
@@ -5788,6 +6934,8 @@ function EconomyService.compute(n: Nation, dt: number)
 	st.happiness = happiness
 	st.oilRate, st.steelRate, st.rpRate = oilRate, steelRate, rpRate
 	st.oilCap, st.steelCap = oilCap, steelCap
+	st.foodCap = foodCap
+	data.Food = math.min(data.Food, foodCap)
 	st.taxes, st.commerce, st.upkeep = taxes, commerce, upkeep
 	st.gross, st.income, st.mult = gross, net, mult
 	st.depotCap = depotCap
@@ -5796,6 +6944,7 @@ function EconomyService.compute(n: Nation, dt: number)
 end
 
 function EconomyService.payDay(n: Nation)
+	S.FarmService.payDay(n)
 	local net = math.floor(n.stats.income or 0)
 	local data = n.data
 	data.Cash = math.max(0, data.Cash + net)
@@ -5824,6 +6973,7 @@ local function tick(dt: number)
 				S.LogisticsService.tick(n, dt, now)
 				S.ProductionService.tick(n, dt, now)
 				S.ResearchService.tick(n, now)
+				S.FarmService.tick(n, dt)
 				S.RewardService.tick(n, now)
 				S.NationService.tick(n, now)
 				if now >= n.nextPayAt then
@@ -5867,7 +7017,848 @@ return EconomyService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="37">
+        <Item class="ModuleScript" referent="38">
+          <Properties>
+            <string name="Name">FarmService</string>
+            <string name="Source"><![CDATA[--[[
+	FarmService
+	Playable farmland. Each Farm Field is planted with a crop (paid seed),
+	grows through four visible stages (faster with workers, nearby
+	farmhouses and barns), then is harvested for food. Fields can replant
+	themselves automatically. Players can walk up to a field and press E
+	(ProximityPrompt) or use the building panel.
+
+	Food: stored nationally (base cap + barns/silos), eaten by citizens every
+	pay day (well-fed nations are happier), packed into FOB supplies, and
+	sold for cash when storage overflows or from the panel.
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage.Shared
+local Config = require(Shared.Config)
+local Crops = require(Shared.Catalog.Crops)
+local Format = require(Shared.Util.Format)
+local Net = require(Shared.Net)
+local ModelBuilder = require(Shared.ModelBuilder)
+local Nations = require(script.Parent.Nations)
+
+type Nation = Nations.Nation
+type BRuntime = Nations.BRuntime
+
+local FarmService = {}
+local S: { [string]: any }
+
+function FarmService.foodCap(n: Nation): number
+	return n.stats.foodCap or Config.FoodBaseCap
+end
+
+-- Add food; overflow is sold. Returns (stored, sold cash).
+function FarmService.addFood(n: Nation, amount: number): (number, number)
+	local room = math.max(0, FarmService.foodCap(n) - n.data.Food)
+	local stored = math.min(room, amount)
+	n.data.Food += stored
+	local cash = math.floor((amount - stored) * Config.FoodPrice)
+	n.data.Cash += cash
+	return stored, cash
+end
+
+-- Growth speed boost from farmhouses / barns near the field (capped).
+local function boostFor(n: Nation, b: BRuntime): number
+	local pos = S.BuildService.worldCFrame(n, b).Position
+	local boost = 0
+	for _, o in n.buildings do
+		if o.def.farmBoost and Nations.isActive(o) then
+			local d = (S.BuildService.worldCFrame(n, o).Position - pos).Magnitude
+			if d <= Config.FarmBoostRange then
+				boost += o.def.farmBoost
+			end
+		end
+	end
+	return math.min(boost, 0.5)
+end
+
+local function promptText(b: BRuntime): (string, string)
+	local crop = Crops.get(b.crop)
+	if not crop then
+		local last = Crops.get(b.lastCrop) or Crops.all()[1]
+		return ("Plant %s ($%d)"):format(last.name, last.seed), "Empty field"
+	elseif (b.growth or 0) >= 1 then
+		return ("Harvest %s"):format(crop.name), ("%d food ready"):format(crop.yield)
+	end
+	return ("%s %d%%"):format(crop.name, math.floor((b.growth or 0) * 100)), Crops.StageNames[Crops.stage(b.growth or 0)]
+end
+
+-- Rebuild crop visuals + attributes (only when the stage changes).
+function FarmService.refresh(b: BRuntime, force: boolean?)
+	local model = b.model
+	if not model then
+		return
+	end
+	local crop = Crops.get(b.crop)
+	local stage = crop and Crops.stage(b.growth or 0) or -1
+	if force or model:GetAttribute("Stage") ~= stage or model:GetAttribute("Crop") ~= b.crop then
+		ModelBuilder.crops(model, crop, math.max(stage, 0))
+		model:SetAttribute("Stage", stage)
+	end
+	model:SetAttribute("Crop", b.crop)
+	model:SetAttribute("Growth", math.floor((b.growth or 0) * 100))
+	model:SetAttribute("AutoReplant", b.auto == true)
+	local prompt = model:FindFirstChild("FarmPrompt", true) :: ProximityPrompt?
+	if prompt then
+		local action, object = promptText(b)
+		prompt.ActionText = action
+		prompt.ObjectText = object
+	end
+end
+
+function FarmService.plant(n: Nation, b: BRuntime, cropId: string?): (boolean, string?)
+	if not b.def.farm then
+		return false, "Not a farm field"
+	end
+	if b.finishAt then
+		return false, "The field is still being prepared"
+	end
+	if b.crop then
+		return false, "Something is already growing here"
+	end
+	local crop = Crops.get(cropId)
+	if not crop then
+		return false, "Pick a crop"
+	end
+	if n.data.Cash < crop.seed then
+		return false, "Not enough cash for seed"
+	end
+	n.data.Cash -= crop.seed
+	b.crop = crop.id
+	b.lastCrop = crop.id
+	b.growth = 0
+	FarmService.refresh(b)
+	return true, nil
+end
+
+function FarmService.harvest(n: Nation, b: BRuntime): (boolean, string?, number?)
+	local crop = Crops.get(b.crop)
+	if not crop then
+		return false, "Nothing planted", nil
+	end
+	if (b.growth or 0) < 1 then
+		return false, ("Not ripe yet (%d%%)"):format(math.floor((b.growth or 0) * 100)), nil
+	end
+	local stored, cash = FarmService.addFood(n, crop.yield)
+	n.data.Stats.Harvests = (n.data.Stats.Harvests or 0) + 1
+	b.crop = nil
+	b.growth = 0
+	local pos = b.model and b.model:GetPivot().Position or n.origin
+	Net.event("Effect"):FireClient(n.player, "Harvest", pos, crop.yield, cash)
+	if b.auto and n.data.Cash >= crop.seed then
+		FarmService.plant(n, b, crop.id)
+	else
+		FarmService.refresh(b)
+	end
+	local _ = stored
+	return true, nil, crop.yield
+end
+
+-- Prompt pressed: harvest when ripe, replant the last crop when empty.
+local function onPrompt(n: Nation, b: BRuntime, player: Player)
+	if player ~= n.player then
+		return
+	end
+	local ok, err
+	if b.crop and (b.growth or 0) >= 1 then
+		ok, err = FarmService.harvest(n, b)
+	elseif not b.crop then
+		ok, err = FarmService.plant(n, b, b.lastCrop or Crops.all()[1].id)
+	else
+		ok, err = false, ("Still growing (%d%%)"):format(math.floor((b.growth or 0) * 100))
+	end
+	if not ok and err then
+		Nations.notify(player, err, "info")
+	end
+	S.StateService.push(n)
+end
+
+-- Called when a field's model is (re)spawned.
+function FarmService.attach(n: Nation, b: BRuntime)
+	if not b.def.farm or not b.model then
+		return
+	end
+	local base = b.model.PrimaryPart
+	if base then
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.Name = "FarmPrompt"
+		prompt.KeyboardKeyCode = Enum.KeyCode.E
+		prompt.HoldDuration = 0.4
+		prompt.MaxActivationDistance = 26
+		prompt.RequiresLineOfSight = false
+		prompt.Parent = base
+		pcall(function()
+			prompt.Triggered:Connect(function(player)
+				onPrompt(n, b, player)
+			end)
+		end)
+	end
+	FarmService.refresh(b, true)
+end
+
+-- Grow every planted field (called from the economy tick).
+function FarmService.tick(n: Nation, dt: number)
+	for _, b in n.buildings do
+		if b.def.farm and b.crop and not b.finishAt and not b.damaged then
+			local crop = Crops.get(b.crop)
+			if crop and (b.growth or 0) < 1 then
+				local speed = math.max(b.eff or 0, 0.25) * (1 + boostFor(n, b))
+				b.growth = math.min(1, (b.growth or 0) + dt * speed / crop.time)
+				FarmService.refresh(b)
+				if b.growth >= 1 then
+					Nations.notify(n.player, ("%s is ready to harvest"):format(crop.name), "good")
+				end
+			end
+		end
+	end
+end
+
+-- Pay day: citizens eat. Fed nations get a happiness bonus.
+function FarmService.payDay(n: Nation)
+	local need = n.data.Population * Config.FoodPerCitizen
+	n.stats.foodUse = need
+	if need <= 0 then
+		n.stats.fed = false
+		return
+	end
+	if n.data.Food >= need then
+		n.data.Food -= need
+		n.stats.fed = true
+	else
+		n.data.Food = 0
+		n.stats.fed = false
+	end
+end
+
+local function onFarm(player: Player, uid: any, action: any, cropId: any)
+	local n = Nations.get(player)
+	if not n or not n.ready or typeof(uid) ~= "number" or typeof(action) ~= "string" then
+		return { ok = false, err = "Invalid request" }
+	end
+	local b = n.buildings[uid]
+	if not b or not b.def.farm then
+		return { ok = false, err = "Not a farm field" }
+	end
+	local ok, err, yield
+	if action == "plant" then
+		ok, err = FarmService.plant(n, b, typeof(cropId) == "string" and cropId or nil)
+	elseif action == "harvest" then
+		ok, err, yield = FarmService.harvest(n, b)
+	elseif action == "auto" then
+		b.auto = not b.auto
+		FarmService.refresh(b)
+		ok = true
+	elseif action == "clear" then
+		b.crop = nil
+		b.growth = 0
+		FarmService.refresh(b)
+		ok = true
+	else
+		return { ok = false, err = "Unknown action" }
+	end
+	S.StateService.push(n)
+	return { ok = ok, err = err, yield = yield }
+end
+
+-- Harvest every ripe field at once.
+local function onHarvestAll(player: Player)
+	local n = Nations.get(player)
+	if not n or not n.ready then
+		return { ok = false }
+	end
+	local count, food = 0, 0
+	for _, b in n.buildings do
+		if b.def.farm and b.crop and (b.growth or 0) >= 1 then
+			local ok, _, yield = FarmService.harvest(n, b)
+			if ok then
+				count += 1
+				food += yield or 0
+			end
+		end
+	end
+	S.StateService.push(n)
+	return { ok = count > 0, count = count, food = food, err = count == 0 and "No ripe fields" or nil }
+end
+
+local function onSellFood(player: Player, amount: any)
+	local n = Nations.get(player)
+	if not n or not n.ready then
+		return { ok = false }
+	end
+	-- no amount = sell everything in storage
+	local qty = typeof(amount) == "number" and math.clamp(math.floor(amount), 0, n.data.Food) or n.data.Food
+	if qty < 1 then
+		return { ok = false, err = "No food to sell" }
+	end
+	n.data.Food = math.max(0, n.data.Food - qty)
+	local cash = math.floor(qty * Config.FoodPrice)
+	n.data.Cash += cash
+	S.StateService.push(n)
+	return { ok = true, cash = cash, text = ("Sold %d food for %s"):format(math.floor(qty), Format.cash(cash)) }
+end
+
+function FarmService.init(services)
+	S = services
+end
+
+function FarmService.start()
+	Net.handle("FarmAction", onFarm, 10)
+	Net.handle("HarvestAll", onHarvestAll, 2)
+	Net.handle("SellFood", onSellFood, 2)
+end
+
+return FarmService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="39">
+          <Properties>
+            <string name="Name">FobService</string>
+            <string name="Source"><![CDATA[--[[
+	FobService
+	Forward Operating Bases and field logistics.
+
+	  * A Logistics Truck or Chinook on the battlefield can set up a FOB
+	    (cash + steel). One per nation (two with VIP), away from strategic
+	    points and other FOBs. It has walls, tents, a helipad, a watchtower
+	    and a supply dump.
+	  * Supplies are packed at home from food + steel into trucks and
+	    helicopters, then driven or flown out and unloaded at the FOB.
+	  * A supplied FOB heals your units around it and its perimeter gun
+	    shoots enemy ground units. Enemies can shoot it down (units or
+	    missiles); a destroyed FOB loses its supplies.
+	  * Unit orders: MOUNT (squads climb into transports), DISMOUNT, LOAD /
+	    UNLOAD SUPPLIES, SET UP FOB and AIRLIFT (helicopters shuttle squads,
+	    supplies and a slung vehicle between your helipad and your FOB).
+]]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Shared = ReplicatedStorage.Shared
+local Config = require(Shared.Config)
+local Grid = require(Shared.Util.Grid)
+local Net = require(Shared.Net)
+local Format = require(Shared.Util.Format)
+local ModelBuilder = require(Shared.ModelBuilder)
+local WarMap = require(Shared.Catalog.WarMap)
+local Nations = require(script.Parent.Nations)
+
+type Nation = Nations.Nation
+
+export type Fob = {
+	id: number,
+	n: Nation,
+	pos: Vector3,
+	hp: number,
+	supplies: number,
+	model: Model,
+	lastShot: number,
+}
+
+local FobService = {}
+local S: { [string]: any }
+local folder: Folder
+local nextId = 0
+
+local function flat(v: Vector3): Vector3
+	return Vector3.new(v.X, 0, v.Z)
+end
+
+local function dist(a: Vector3, b: Vector3): number
+	return (flat(a) - flat(b)).Magnitude
+end
+
+function FobService.maxFor(n: Nation): number
+	return Config.FobMax + (n.passes.VIP and 1 or 0)
+end
+
+function FobService.all(): { Fob }
+	local out = {}
+	for _, n in Nations.all() do
+		for _, f in n.fobs do
+			table.insert(out, f)
+		end
+	end
+	return out
+end
+
+local function refresh(f: Fob)
+	f.model:SetAttribute("Hp", math.floor(f.hp))
+	f.model:SetAttribute("Supplies", math.floor(f.supplies))
+end
+
+local function create(n: Nation, pos: Vector3, hp: number?, supplies: number?): Fob
+	nextId += 1
+	local model = ModelBuilder.fob(Config.NationColors[n.plotIndex])
+	model.Name = "FOB_" .. n.userId .. "_" .. nextId
+	-- gate faces the capital
+	local look = flat(Config.MainlandOrigin - pos)
+	local cf = look.Magnitude > 1 and CFrame.lookAt(flat(pos), flat(pos) + look.Unit) or CFrame.new(flat(pos))
+	model:PivotTo(cf)
+	model:SetAttribute("Fob", true)
+	model:SetAttribute("OwnerId", n.userId)
+	model:SetAttribute("OwnerName", n.player.DisplayName)
+	model:SetAttribute("Color", Config.NationColors[n.plotIndex])
+	model:SetAttribute("MaxHp", Config.FobHp)
+	model:SetAttribute("SupplyCap", Config.FobSupplyCap)
+	model.Parent = folder
+	local f: Fob = {
+		id = nextId,
+		n = n,
+		pos = flat(pos),
+		hp = hp or Config.FobHp,
+		supplies = supplies or 0,
+		model = model,
+		lastShot = 0,
+	}
+	table.insert(n.fobs, f)
+	refresh(f)
+	return f
+end
+
+-- Is this a legal FOB spot? (on the battlefield, clear of points and other FOBs)
+function FobService.canBuildAt(pos: Vector3): (boolean, string?)
+	if not Grid.inMainland(pos, -60) then
+		return false, "FOBs go on the central battlefield"
+	end
+	for _, def in WarMap do
+		if dist(pos, Config.MainlandOrigin + def.offset) < Config.FobSpacing then
+			return false, ("Too close to the %s"):format(def.name)
+		end
+	end
+	for _, f in FobService.all() do
+		if dist(pos, f.pos) < Config.FobSpacing then
+			return false, "Too close to another FOB"
+		end
+	end
+	return true, nil
+end
+
+function FobService.deploy(n: Nation, u: any): (boolean, string?)
+	if not u.def.fob then
+		return false, "Only Logistics Trucks and Chinooks can set up a FOB"
+	end
+	if u.carried then
+		return false, "Unload it first"
+	end
+	if #n.fobs >= FobService.maxFor(n) then
+		return false, ("FOB limit reached (%d)%s"):format(FobService.maxFor(n), n.passes.VIP and "" or " - VIP raises it to 2")
+	end
+	-- the base goes up just ahead of the truck, towards the capital
+	local here = flat(u.root.CFrame.Position)
+	local toCentre = flat(Config.MainlandOrigin) - here
+	local at = toCentre.Magnitude > 50 and here + toCentre.Unit * 40 or here
+	local ok, err = FobService.canBuildAt(at)
+	if not ok then
+		return false, err
+	end
+	if n.data.Cash < Config.FobCost then
+		return false, ("A FOB costs %s"):format(Format.cash(Config.FobCost))
+	end
+	if n.data.Steel < Config.FobSteel then
+		return false, ("A FOB needs %d steel"):format(Config.FobSteel)
+	end
+	n.data.Cash -= Config.FobCost
+	n.data.Steel -= Config.FobSteel
+	local f = create(n, at)
+	-- whatever the builder carried goes straight into the dump
+	local moved = math.min(u.supplies, Config.FobSupplyCap)
+	f.supplies += moved
+	S.UnitService.setSupplies(u, u.supplies - moved)
+	refresh(f)
+	Nations.notify(n.player, "FOB established on the front line", "good")
+	Net.event("Effect"):FireClient(n.player, "BuildDone", f.pos, "Forward Operating Base")
+	return true, nil
+end
+
+-- Own FOB within `radius` of a position.
+function FobService.near(n: Nation, pos: Vector3, radius: number?): Fob?
+	for _, f in n.fobs do
+		if dist(pos, f.pos) <= (radius or Config.FobRadius) then
+			return f
+		end
+	end
+	return nil
+end
+
+function FobService.enemyFobInRange(pos: Vector3, range: number, n: Nation): Fob?
+	for _, f in FobService.all() do
+		if f.n ~= n and dist(pos, f.pos) <= range + 30 then
+			return f
+		end
+	end
+	return nil
+end
+
+local function destroy(f: Fob, attacker: Nation?)
+	local idx = table.find(f.n.fobs, f)
+	if idx then
+		table.remove(f.n.fobs, idx)
+	end
+	Net.event("Effect"):FireAllClients("Explosion", f.pos + Vector3.new(0, 3, 0), 3)
+	f.model:Destroy()
+	Nations.notify(f.n.player, "Your FOB was destroyed!", "bad")
+	if attacker and attacker.player.Parent then
+		attacker.data.Cash += 15000
+		Nations.notify(attacker.player, ("You destroyed %s's FOB! +%s"):format(f.n.player.DisplayName, Format.cash(15000)), "good")
+	end
+end
+
+function FobService.damage(f: Fob, amount: number, attacker: Nation?)
+	if f.hp <= 0 then
+		return
+	end
+	f.hp -= amount
+	if f.hp <= 0 then
+		destroy(f, attacker)
+	else
+		refresh(f)
+	end
+end
+
+-- Missiles hitting the battlefield also hurt FOBs in the blast.
+function FobService.damageNear(pos: Vector3, radius: number, amount: number, attacker: Nation)
+	for _, f in FobService.all() do
+		if f.n ~= attacker and dist(pos, f.pos) <= radius + 30 then
+			FobService.damage(f, amount, attacker)
+		end
+	end
+end
+
+-- Unload a transport's supplies into a nearby own FOB; returns amount moved.
+function FobService.deliver(u: any): number
+	if (u.supplies or 0) <= 0 then
+		return 0
+	end
+	local f = FobService.near(u.n, u.root.CFrame.Position)
+	if not f then
+		return 0
+	end
+	local moved = math.floor(math.min(u.supplies, Config.FobSupplyCap - f.supplies))
+	if moved > 0 then
+		f.supplies += moved
+		S.UnitService.setSupplies(u, u.supplies - moved)
+		refresh(f)
+	end
+	return moved
+end
+
+-- Pack supplies at home from food + steel; returns amount loaded.
+function FobService.pack(n: Nation, u: any): number
+	local cap = u.def.cargo and u.def.cargo.supplies or 0
+	local room = cap - u.supplies
+	local cost = Config.SupplyCost
+	local afford = math.min(room, math.floor(n.data.Food / cost.food), math.floor(n.data.Steel / cost.steel))
+	if afford <= 0 then
+		return 0
+	end
+	n.data.Food -= afford * cost.food
+	n.data.Steel -= afford * cost.steel
+	S.UnitService.setSupplies(u, u.supplies + afford)
+	return afford
+end
+
+---------------------------------------------------------------------------
+-- Tick: heal friendly units, perimeter gun
+---------------------------------------------------------------------------
+local function tick(dt: number)
+	local now = os.clock()
+	local units = S.UnitService.all()
+	for _, f in FobService.all() do
+		local target, bestD = nil, Config.FobGunRange
+		for u in units do
+			if not u.carried then
+				local d = dist(u.root.CFrame.Position, f.pos)
+				if u.n == f.n then
+					if d <= Config.FobRadius and f.supplies > 0 and u.hp < u.def.hp then
+						local healed = S.UnitService.heal(u, math.min(Config.FobHealRate * dt, f.supplies * Config.FobHealPerSupply))
+						f.supplies = math.max(0, f.supplies - healed / Config.FobHealPerSupply)
+					end
+				elseif not u.air and d <= bestD then
+					target, bestD = u, d
+				end
+			end
+		end
+		if target then
+			if now - f.lastShot > 1 then
+				f.lastShot = now
+				Net.event("Effect"):FireAllClients("Shot", f.pos + Vector3.new(0, 9, 0), target.root.CFrame.Position, false)
+			end
+			S.UnitService.damage(target, Config.FobGunDps * dt, f.n)
+		end
+		refresh(f)
+	end
+end
+
+FobService._tick = tick
+
+---------------------------------------------------------------------------
+-- Field orders
+---------------------------------------------------------------------------
+local function transportsIn(list: { any }): { any }
+	local out = {}
+	for _, u in list do
+		if u.def.cargo and (u.def.cargo.squads or 0) > 0 and not u.carried then
+			table.insert(out, u)
+		end
+	end
+	return out
+end
+
+local function squadsIn(list: { any }): { any }
+	local out = {}
+	for _, u in list do
+		if u.def.class == "infantry" and not u.carried then
+			table.insert(out, u)
+		end
+	end
+	return out
+end
+
+-- Squads climb into the nearest transport with room (walking over if needed).
+local function mount(n: Nation, units: { any }): (number, string?)
+	local squads = squadsIn(units)
+	if #squads == 0 then
+		return 0, "Select infantry squads (and a transport)"
+	end
+	local transports = transportsIn(units)
+	if #transports == 0 then
+		for _, u in n.units do
+			if u.def.cargo and (u.def.cargo.squads or 0) > 0 and not u.carried then
+				table.insert(transports, u)
+			end
+		end
+	end
+	local boarded, walking = 0, 0
+	local seats: { [any]: number } = {}
+	for _, t in transports do
+		seats[t] = S.UnitService.freeSeats(t)
+	end
+	for _, sq in squads do
+		local best, bestD = nil, math.huge
+		for _, t in transports do
+			if seats[t] > 0 then
+				local d = dist(sq.root.CFrame.Position, t.root.CFrame.Position)
+				if d < bestD then
+					best, bestD = t, d
+				end
+			end
+		end
+		if best then
+			seats[best] -= 1
+			if bestD <= Config.BoardRange then
+				if S.UnitService.board(sq, best) then
+					boarded += 1
+				end
+			else
+				S.UnitService.drive(sq, best.root.CFrame.Position, "board:" .. best.uid)
+				walking += 1
+			end
+		end
+	end
+	if boarded + walking == 0 then
+		return 0, "No free seats - Humvees, IFVs, trucks and helicopters carry squads"
+	end
+	return boarded + walking, nil
+end
+
+local function dismount(units: { any }): number
+	local count = 0
+	for _, u in units do
+		if #u.cargo > 0 or u.slung then
+			if u.air and not u.landed then
+				S.UnitService.landNow(u, "unload")
+				count += #u.cargo + (u.slung and 1 or 0)
+			else
+				count += S.UnitService.unload(u)
+			end
+		end
+	end
+	return count
+end
+
+-- Helicopter shuttle between the home helipad and the FOB.
+local function airlift(n: Nation, units: { any }, dest: string): (number, string?)
+	local helis = {}
+	for _, u in units do
+		if u.air and u.def.cargo and not u.carried then
+			table.insert(helis, u)
+		end
+	end
+	if #helis == 0 then
+		return 0, "Select a Black Hawk or Chinook"
+	end
+	local fob = n.fobs[1]
+	if dest == "fob" and not fob then
+		return 0, "Set up a FOB first (Logistics Truck or Chinook on the battlefield)"
+	end
+	for _, h in helis do
+		local here = h.root.CFrame.Position
+		if dest == "fob" then
+			if h.location == "home" then
+				-- pick up squads waiting at home, supplies, and (Chinook) a light vehicle
+				for _, sq in n.units do
+					if S.UnitService.freeSeats(h) <= 0 then
+						break
+					end
+					if sq.def.class == "infantry" and not sq.carried and sq.location == "home" then
+						S.UnitService.board(sq, h)
+					end
+				end
+				FobService.pack(n, h)
+				if (h.def.cargo.vehicles or 0) > 0 and not h.slung then
+					local best, bestD = nil, math.huge
+					for _, v in n.units do
+						if v.def.light and not v.carried and v.location == "home" and v ~= h then
+							local d = dist(v.root.CFrame.Position, here)
+							if d < bestD then
+								best, bestD = v, d
+							end
+						end
+					end
+					if best then
+						S.UnitService.slingLoad(h, best)
+					end
+				end
+			end
+			S.UnitService.drive(h, (fob :: Fob).pos + Vector3.new(0, 0, 0), "unload")
+		else
+			local f = FobService.near(n, here)
+			if f then
+				for _, sq in n.units do
+					if S.UnitService.freeSeats(h) <= 0 then
+						break
+					end
+					if sq.def.class == "infantry" and not sq.carried and dist(sq.root.CFrame.Position, f.pos) <= Config.FobRadius then
+						S.UnitService.board(sq, h)
+					end
+				end
+			end
+			S.UnitService.drive(h, S.UnitService.helipadPos(n), "unload")
+		end
+	end
+	return #helis, nil
+end
+
+local function onOrder(player: Player, kind: any, uids: any, arg: any)
+	local n = Nations.get(player)
+	if not n or not n.ready or typeof(kind) ~= "string" then
+		return { ok = false, err = "Invalid request" }
+	end
+	local units = S.UnitService.collect(n, uids)
+	if #units == 0 then
+		return { ok = false, err = "Select units first" }
+	end
+	if kind == "mount" then
+		local count, err = mount(n, units)
+		return { ok = count > 0, count = count, err = err }
+	elseif kind == "dismount" then
+		local count = dismount(units)
+		return { ok = count > 0, count = count, err = count == 0 and "Nobody aboard" or nil }
+	elseif kind == "loadSupplies" then
+		local total = 0
+		for _, u in units do
+			if u.def.cargo and (u.def.cargo.supplies or 0) > 0 and not u.carried then
+				if u.location ~= "home" then
+					return { ok = false, err = "Supplies are packed at home - bring the transport back" }
+				end
+				total += FobService.pack(n, u)
+			end
+		end
+		S.StateService.push(n)
+		return { ok = total > 0, count = total, err = total == 0 and "Nothing loaded - needs a truck or helicopter with room, food and steel" or nil }
+	elseif kind == "unloadSupplies" then
+		local total = 0
+		for _, u in units do
+			total += FobService.deliver(u)
+		end
+		return { ok = total > 0, count = total, err = total == 0 and "Drive a loaded transport into your FOB first" or nil }
+	elseif kind == "fob" then
+		for _, u in units do
+			if u.def.fob then
+				local ok, err = FobService.deploy(n, u)
+				S.StateService.push(n)
+				return { ok = ok, err = err }
+			end
+		end
+		return { ok = false, err = "Select a Logistics Truck or Chinook on the battlefield" }
+	elseif kind == "airlift" then
+		local count, err = airlift(n, units, arg == "home" and "home" or "fob")
+		S.StateService.push(n)
+		return { ok = count > 0, count = count, err = err }
+	end
+	return { ok = false, err = "Unknown order" }
+end
+
+---------------------------------------------------------------------------
+-- Save / load / snapshot
+---------------------------------------------------------------------------
+function FobService.loadNation(n: Nation)
+	for _, s in n.data.Fobs or {} do
+		if typeof(s) == "table" and type(s.x) == "number" and type(s.z) == "number" then
+			local pos = Vector3.new(s.x, 0, s.z)
+			if Grid.inMainland(pos) and #n.fobs < FobService.maxFor(n) then
+				create(n, pos, math.clamp(s.hp or Config.FobHp, 1, Config.FobHp), math.clamp(s.s or 0, 0, Config.FobSupplyCap))
+			end
+		end
+	end
+end
+
+function FobService.serialize(n: Nation)
+	local out = {}
+	for _, f in n.fobs do
+		table.insert(out, { x = math.floor(f.pos.X), z = math.floor(f.pos.Z), hp = math.floor(f.hp), s = math.floor(f.supplies) })
+	end
+	n.data.Fobs = out
+end
+
+function FobService.clearNation(n: Nation)
+	for _, f in n.fobs do
+		f.model:Destroy()
+	end
+	table.clear(n.fobs)
+end
+
+function FobService.snapshot(n: Nation): { any }
+	local out = {}
+	for _, f in n.fobs do
+		table.insert(out, { x = math.floor(f.pos.X), z = math.floor(f.pos.Z), hp = math.floor(f.hp), maxHp = Config.FobHp, supplies = math.floor(f.supplies), cap = Config.FobSupplyCap })
+	end
+	return out
+end
+
+function FobService.init(services)
+	S = services
+	folder = Instance.new("Folder")
+	folder.Name = "Fobs"
+	local mainland = workspace:FindFirstChild("Mainland")
+	folder.Parent = mainland or workspace
+end
+
+function FobService.start()
+	Net.handle("UnitOrder", onOrder, 6)
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			local ok, err = pcall(tick, 1)
+			if not ok then
+				warn("[FOB] tick failed: " .. tostring(err))
+			end
+		end
+	end)
+end
+
+return FobService
+]]></string>
+          </Properties>
+        </Item>
+        <Item class="ModuleScript" referent="40">
           <Properties>
             <string name="Name">LogisticsService</string>
             <string name="Source"><![CDATA[--[[
@@ -6056,7 +8047,7 @@ return LogisticsService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="38">
+        <Item class="ModuleScript" referent="41">
           <Properties>
             <string name="Name">MonetizationService</string>
             <string name="Source"><![CDATA[--[[
@@ -6267,7 +8258,7 @@ return MonetizationService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="39">
+        <Item class="ModuleScript" referent="42">
           <Properties>
             <string name="Name">NationService</string>
             <string name="Source"><![CDATA[--[[
@@ -6430,7 +8421,7 @@ return NationService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="40">
+        <Item class="ModuleScript" referent="43">
           <Properties>
             <string name="Name">Nations</string>
             <string name="Source"><![CDATA[--[[
@@ -6466,6 +8457,10 @@ export type BRuntime = {
 	queue: { { id: string, kind: string, progress: number, started: boolean } },
 	reloadUntil: number,
 	connected: boolean,
+	crop: string?, -- farm fields
+	growth: number?,
+	auto: boolean?,
+	lastCrop: string?,
 	eff: number,
 	status: string,
 }
@@ -6490,6 +8485,7 @@ export type Nation = {
 	shieldUntil: number,
 	undo: { { [string]: any } },
 	units: { [number]: any },
+	fobs: { any },
 	nextUnitUid: number,
 	sent: { [string]: string },
 	ready: boolean,
@@ -6576,7 +8572,7 @@ return Nations
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="41">
+        <Item class="ModuleScript" referent="44">
           <Properties>
             <string name="Name">PlotService</string>
             <string name="Source"><![CDATA[--[[
@@ -6929,12 +8925,14 @@ return PlotService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="42">
+        <Item class="ModuleScript" referent="45">
           <Properties>
             <string name="Name">ProductionService</string>
             <string name="Source"><![CDATA[--[[
 	ProductionService
-	Military factories build missiles, drones and vehicles from a queue.
+	Production buildings work through a queue: military factories build
+	missiles, drones and vehicles, barracks train infantry squads and
+	helipads build helicopters (factory.makes in the building catalog).
 	Cash is paid when queued, steel when an item starts, and fuel is burned
 	while it is being built (delivered by refinery trucks).
 ]]
@@ -6969,6 +8967,22 @@ local function catalogFor(kind: string, id: string): any
 	end
 	return Weapons.get(id)
 end
+
+-- Hint for where a category is built.
+function ProductionService.whereMade(category: string): string
+	if category == "infantry" then
+		return "train squads at a Barracks"
+	elseif category == "air" then
+		return "build helicopters at a Helipad"
+	end
+	return "use a Military Factory"
+end
+
+local ROLL_OUT = {
+	vehicle = "%s rolled out of the factory",
+	infantry = "%s marched out of the barracks",
+	air = "%s lifted off the helipad",
+}
 
 function ProductionService.queueLimit(n: Nation): number
 	return Config.MaxQueuePerFactory + (n.passes.ExtraQueue and 3 or 0)
@@ -7025,7 +9039,7 @@ function ProductionService.tick(n: Nation, dt: number, _now: number)
 								if S.UnitService.canAdd(n) then
 									S.UnitService.spawn(n, item.id, nil, b)
 									table.remove(b.queue, 1)
-									Nations.notify(n.player, cat.name .. " rolled out of the factory", "good")
+									Nations.notify(n.player, (ROLL_OUT[cat.class] or ROLL_OUT.vehicle):format(cat.name), "good")
 								else
 									status = "Army Full - Build Vehicle Depots"
 								end
@@ -7063,6 +9077,10 @@ local function onQueue(player: Player, factoryUid: any, kind: any, id: any)
 	local cat = catalogFor(kind, id)
 	if not cat then
 		return { ok = false, err = "Unknown item" }
+	end
+	local category = kind == "weapon" and "weapon" or cat.class
+	if not table.find(b.def.factory.makes, category) then
+		return { ok = false, err = ("%s can't build that - %s"):format(b.def.name, ProductionService.whereMade(category)) }
 	end
 	local ok, reason = Unlocks.check(cat, S.BuildService.access(n))
 	if not ok then
@@ -7124,7 +9142,7 @@ return ProductionService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="43">
+        <Item class="ModuleScript" referent="46">
           <Properties>
             <string name="Name">ResearchService</string>
             <string name="Source"><![CDATA[--[[
@@ -7227,7 +9245,7 @@ return ResearchService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="44">
+        <Item class="ModuleScript" referent="47">
           <Properties>
             <string name="Name">RewardService</string>
             <string name="Source"><![CDATA[--[[
@@ -7393,6 +9411,10 @@ function RewardService.questProgress(n: Nation): (any?, number, number)
 		cur = data.Stats.Captures
 	elseif q.kind == "units" then
 		cur = S.UnitService.count(n)
+	elseif q.kind == "harvests" then
+		cur = data.Stats.Harvests or 0
+	elseif q.kind == "fob" then
+		cur = #n.fobs
 	end
 	return q, math.min(cur, q.count), q.count
 end
@@ -7433,7 +9455,7 @@ return RewardService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="45">
+        <Item class="ModuleScript" referent="48">
           <Properties>
             <string name="Name">StateService</string>
             <string name="Source"><![CDATA[--[[
@@ -7505,6 +9527,12 @@ function StateService.snapshot(n: Nation): { [string]: any }
 		oilCap = st.oilCap or Config.BaseResourceCap,
 		oilRate = r1(st.oilRate),
 		steel = math.floor(data.Steel),
+		food = math.floor(data.Food),
+		foodCap = st.foodCap or Config.FoodBaseCap,
+		foodUse = math.floor((data.Population * Config.FoodPerCitizen) * 10) / 10,
+		fed = st.fed == true,
+		fobs = S.FobService.snapshot(n),
+		fobMax = S.FobService.maxFor(n),
 		steelCap = st.steelCap or Config.BaseResourceCap,
 		steelRate = r1(st.steelRate),
 		rp = math.floor(data.ResearchPoints),
@@ -7579,19 +9607,27 @@ return StateService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="46">
+        <Item class="ModuleScript" referent="49">
           <Properties>
             <string name="Name">UnitService</string>
             <string name="Source"><![CDATA[--[[
 	UnitService
-	Ground vehicles. Units are physics assemblies driven by AlignPosition /
-	AlignOrientation (server-owned) so they glide smoothly on every client.
+	Everything you command on the map: vehicles, infantry squads (classic
+	Roblox soldiers) and helicopters. Units are physics assemblies driven by
+	AlignPosition / AlignOrientation (server-owned) so they glide smoothly on
+	every client.
 
-	They really drive: out of your city, over your bridge, across the central
-	battlefield and, with PvP on, over a rival's bridge into their city. Every
-	command is routed through the bridge waypoints. Units fight any enemy
-	vehicle in the same theatre (the battlefield, or a city being raided),
-	wear down strategic-point garrisons, and knock out buildings on raids.
+	  * Ground units really drive / march: out of your city, over your
+	    bridge, across the central battlefield and, with PvP on, over a
+	    rival's bridge into their city (waypoint routing through bridges).
+	  * Helicopters fly straight to the target at altitude, then land.
+	  * Transports carry squads (Humvees, IFVs, trucks, Black Hawks,
+	    Chinooks), supply points (trucks + helicopters) and a slung light
+	    vehicle (Chinook). Squads hide inside while carried.
+	  * Units fight enemies of a class their weapons can hit (`vs`) in the
+	    same theatre (the battlefield, or a city being raided), wear down
+	    strategic points and enemy FOBs, and knock out buildings on raids.
+	    A city's air defenses shoot at enemy helicopters overhead.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -7617,10 +9653,18 @@ export type Unit = {
 	root: BasePart,
 	align: AlignPosition,
 	orient: AlignOrientation,
-	location: string, -- "home" | "mainland" (battlefield + bridges) | "raid"
+	location: string, -- "home" | "mainland" (battlefield, bridges, sea) | "raid"
 	height: number,
 	lastShot: number,
 	path: { Vector3 },
+	air: boolean,
+	landed: boolean,
+	arrive: string?, -- what to do on arrival: "unload" | "board:<uid>"
+	carried: any?, -- the transport this unit rides in
+	cargo: { any }, -- squads aboard
+	slung: any?, -- vehicle under a Chinook
+	sling: WeldConstraint?,
+	supplies: number,
 }
 
 local UnitService = {}
@@ -7661,16 +9705,29 @@ function UnitService.canAdd(n: Nation): boolean
 	return UnitService.count(n) < UnitService.cap(n)
 end
 
+function UnitService.all(): { [Unit]: boolean }
+	return all
+end
+
+local function flat(v: Vector3): Vector3
+	return Vector3.new(v.X, 0, v.Z)
+end
+
+local function posOf(u: Unit): Vector3
+	return u.root.CFrame.Position
+end
+
 local function homePos(n: Nation, near: any?): Vector3
 	local anchor: Vector3? = nil
-	for _, b in n.buildings do
-		if b.def.depot and Nations.isActive(b) then
-			anchor = S.BuildService.worldCFrame(n, b).Position
-			break
-		end
-	end
-	if not anchor and near then
+	if near then
 		anchor = S.BuildService.worldCFrame(n, near).Position
+	else
+		for _, b in n.buildings do
+			if b.def.depot and Nations.isActive(b) then
+				anchor = S.BuildService.worldCFrame(n, b).Position
+				break
+			end
+		end
 	end
 	local base = anchor or Grid.yard(n.plotIndex)
 	local rng = Random.new()
@@ -7681,15 +9738,36 @@ local function homePos(n: Nation, near: any?): Vector3
 	return (Grid.plotCFrame(n.plotIndex) * CFrame.new(math.clamp(l.X, -half, half), 0, math.clamp(l.Z, -half, half))).Position
 end
 
+-- Where helicopters park at home: the first finished helipad, else the yard.
+function UnitService.helipadPos(n: Nation): Vector3
+	for _, b in n.buildings do
+		if b.def.helipad and b.finishAt == nil then
+			return S.BuildService.worldCFrame(n, b).Position
+		end
+	end
+	return Grid.yard(n.plotIndex)
+end
+
 local function setTarget(u: Unit, pos: Vector3)
-	local current = u.root.CFrame.Position
-	local target = Vector3.new(pos.X, u.height, pos.Z)
+	local current = posOf(u)
+	local y = u.height
+	if u.air then
+		y = Config.HeliAltitude
+		u.landed = false
+	end
+	local target = Vector3.new(pos.X, y, pos.Z)
 	u.align.Position = target
 	local flatDir = Vector3.new(target.X - current.X, 0, target.Z - current.Z)
 	if flatDir.Magnitude > 1 then
 		u.orient.CFrame = CFrame.lookAt(Vector3.zero, flatDir.Unit)
 	end
 	u.model:SetAttribute("Moving", true)
+end
+
+local function cargoAttrs(u: Unit)
+	u.model:SetAttribute("Cargo", #u.cargo > 0 and #u.cargo or nil)
+	u.model:SetAttribute("Supplies", u.supplies > 0 and math.floor(u.supplies) or nil)
+	u.model:SetAttribute("Slung", u.slung and u.slung.def.name or nil)
 end
 
 function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: number?): Unit?
@@ -7700,17 +9778,26 @@ function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: 
 	local model = ModelBuilder.unit(def)
 	local root = model.PrimaryPart :: BasePart
 	local height = root.Size.Y / 2
-	-- weld everything to the root and make it a physics assembly
+	-- weld everything to the root (or to its rig part, e.g. boots to legs,
+	-- blades to rotor hubs); jointed parts keep their Motor6D so clients can
+	-- animate legs and rotors
 	for _, p in model:GetDescendants() do
 		if p:IsA("BasePart") then
 			p.CanCollide = false
 			p.CanTouch = false
 			if p ~= root then
 				p.Massless = true
-				local w = Instance.new("WeldConstraint")
-				w.Part0 = root
-				w.Part1 = p
-				w.Parent = p
+				if not p:GetAttribute("Jointed") then
+					local to = root
+					local name = p:GetAttribute("WeldTo") :: string?
+					if name and p.Parent then
+						to = (p.Parent:FindFirstChild(name) :: BasePart?) or root
+					end
+					local w = Instance.new("WeldConstraint")
+					w.Part0 = to
+					w.Part1 = p
+					w.Parent = p
+				end
 			end
 		end
 	end
@@ -7722,13 +9809,13 @@ function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: 
 	align.Attachment0 = att
 	align.MaxForce = 1e7
 	align.MaxVelocity = def.speed * Config.UnitSpeedScale
-	align.Responsiveness = 30
+	align.Responsiveness = def.class == "air" and 14 or 30
 	align.Parent = root
 	local orient = Instance.new("AlignOrientation")
 	orient.Mode = Enum.OrientationAlignmentMode.OneAttachment
 	orient.Attachment0 = att
 	orient.MaxTorque = 1e7
-	orient.Responsiveness = 18
+	orient.Responsiveness = def.class == "air" and 8 or 18
 	orient.Parent = root
 
 	local unitUid = uid or n.nextUnitUid
@@ -7738,14 +9825,23 @@ function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: 
 	model.Name = def.name
 	model:SetAttribute("Unit", true)
 	model:SetAttribute("UnitId", def.id)
+	model:SetAttribute("Class", def.class)
 	model:SetAttribute("Uid", unitUid)
 	model:SetAttribute("OwnerId", n.userId)
 	model:SetAttribute("OwnerName", n.player.DisplayName)
 	model:SetAttribute("Hp", hp or def.hp)
 	model:SetAttribute("MaxHp", def.hp)
 	model:SetAttribute("Color", Config.NationColors[n.plotIndex] or Color3.new(1, 1, 1))
+	if def.class == "infantry" then
+		model:SetAttribute("Infantry", true)
+	elseif def.class == "air" then
+		model:SetAttribute("Rotors", true)
+	end
 
 	local pos = homePos(n, near)
+	if def.class == "air" and not near then
+		pos = UnitService.helipadPos(n)
+	end
 	model:PivotTo(CFrame.new(pos.X, height, pos.Z))
 	for _, p in model:GetDescendants() do
 		if p:IsA("BasePart") then
@@ -7773,30 +9869,166 @@ function UnitService.spawn(n: Nation, id: string, hp: number?, near: any?, uid: 
 		height = height,
 		lastShot = 0,
 		path = {},
+		air = def.class == "air",
+		landed = true,
+		arrive = nil,
+		carried = nil,
+		cargo = {},
+		slung = nil,
+		sling = nil,
+		supplies = 0,
 	}
 	n.units[unitUid] = u
 	all[u] = true
 	return u
 end
 
+---------------------------------------------------------------------------
+-- Cargo: squads inside, supplies, a slung vehicle
+---------------------------------------------------------------------------
+local function capacity(u: Unit, kind: string): number
+	local c = u.def.cargo
+	return c and (c[kind] or 0) or 0
+end
+
+function UnitService.freeSeats(u: Unit): number
+	return capacity(u, "squads") - #u.cargo
+end
+
+-- Put a squad inside a transport (hidden until unloaded).
+function UnitService.board(squad: Unit, transport: Unit): boolean
+	if squad.def.class ~= "infantry" or squad.carried or UnitService.freeSeats(transport) <= 0 or squad.n ~= transport.n then
+		return false
+	end
+	squad.carried = transport
+	squad.path = {}
+	squad.arrive = nil
+	squad.model:SetAttribute("Moving", nil)
+	squad.model:SetAttribute("Carried", transport.uid)
+	squad.model.Parent = nil
+	table.insert(transport.cargo, squad)
+	cargoAttrs(transport)
+	return true
+end
+
+-- Hang a light vehicle under a Chinook.
+function UnitService.slingLoad(heli: Unit, vehicle: Unit): boolean
+	if capacity(heli, "vehicles") <= 0 or heli.slung or not vehicle.def.light or vehicle.carried or vehicle.n ~= heli.n then
+		return false
+	end
+	vehicle.carried = heli
+	vehicle.path = {}
+	vehicle.arrive = nil
+	vehicle.align.Enabled = false
+	vehicle.orient.Enabled = false
+	vehicle.model:SetAttribute("Moving", nil)
+	vehicle.model:SetAttribute("Carried", heli.uid)
+	vehicle.model:PivotTo(heli.root.CFrame * CFrame.new(0, -heli.height - vehicle.height - 2.5, 0))
+	for _, p in vehicle.model:GetDescendants() do
+		if p:IsA("BasePart") then
+			p.Massless = true
+		end
+	end
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = "Sling"
+	weld.Part0 = heli.root
+	weld.Part1 = vehicle.root
+	weld.Parent = heli.root
+	heli.slung = vehicle
+	heli.sling = weld
+	cargoAttrs(heli)
+	return true
+end
+
+-- Everyone out: squads spread around the transport, slung vehicle set down.
+function UnitService.unload(transport: Unit): number
+	local base = flat(posOf(transport))
+	local count = 0
+	for i, squad in transport.cargo do
+		local a = (i - 1) * (math.pi * 2 / math.max(1, #transport.cargo)) + 0.6
+		local spot = base + Vector3.new(math.sin(a) * 9, 0, math.cos(a) * 9)
+		squad.carried = nil
+		squad.model:SetAttribute("Carried", nil)
+		squad.model:PivotTo(CFrame.new(spot.X, squad.height, spot.Z))
+		squad.align.Position = Vector3.new(spot.X, squad.height, spot.Z)
+		squad.root.AssemblyLinearVelocity = Vector3.zero
+		squad.model.Parent = folder
+		count += 1
+	end
+	table.clear(transport.cargo)
+	local v = transport.slung
+	if v then
+		if transport.sling then
+			transport.sling:Destroy()
+		end
+		transport.slung = nil
+		transport.sling = nil
+		local spot = base + Vector3.new(0, 0, 14)
+		v.carried = nil
+		v.model:SetAttribute("Carried", nil)
+		v.root.Massless = false
+		v.model:PivotTo(CFrame.new(spot.X, v.height, spot.Z))
+		v.align.Position = Vector3.new(spot.X, v.height, spot.Z)
+		v.align.Enabled = true
+		v.orient.Enabled = true
+		v.root.AssemblyLinearVelocity = Vector3.zero
+		count += 1
+	end
+	cargoAttrs(transport)
+	return count
+end
+
+function UnitService.setSupplies(u: Unit, amount: number)
+	u.supplies = math.max(0, amount)
+	cargoAttrs(u)
+end
+
 function UnitService.remove(u: Unit, exploded: boolean?)
 	all[u] = nil
 	u.n.units[u.uid] = nil
-	if exploded then
-		Net.event("Effect"):FireAllClients("Explosion", u.root.CFrame.Position, 1)
+	-- whoever rides inside goes down with it
+	for _, squad in u.cargo do
+		all[squad] = nil
+		squad.n.units[squad.uid] = nil
+		squad.model:Destroy()
+	end
+	table.clear(u.cargo)
+	if u.slung then
+		local v = u.slung
+		u.slung = nil
+		UnitService.remove(v, exploded)
+	end
+	if u.carried then
+		local t = u.carried
+		local idx = table.find(t.cargo, u)
+		if idx then
+			table.remove(t.cargo, idx)
+		end
+		if t.slung == u then
+			t.slung = nil
+			if t.sling then
+				t.sling:Destroy()
+				t.sling = nil
+			end
+		end
+		cargoAttrs(t)
+	end
+	if exploded and u.model.Parent then
+		Net.event("Effect"):FireAllClients("Explosion", posOf(u), 1)
 	end
 	u.model:Destroy()
 end
 
 -- Returns true if destroyed.
 function UnitService.damage(u: Unit, amount: number, attacker: Nation?): boolean
-	if not all[u] then
+	if not all[u] or u.carried then
 		return false
 	end
 	u.hp -= amount
 	u.model:SetAttribute("Hp", math.max(0, math.floor(u.hp)))
 	if u.hp <= 0 then
-		Nations.notify(u.n.player, ("Your %s was destroyed"):format(u.def.name), "bad")
+		local lost = #u.cargo > 0 and (" with %d squads aboard"):format(#u.cargo) or ""
+		Nations.notify(u.n.player, ("Your %s was destroyed%s"):format(u.def.name, lost), "bad")
 		if attacker then
 			attacker.data.Stats.Kills += 1
 		end
@@ -7806,11 +10038,21 @@ function UnitService.damage(u: Unit, amount: number, attacker: Nation?): boolean
 	return false
 end
 
+function UnitService.heal(u: Unit, amount: number): number
+	local missing = u.def.hp - u.hp
+	local healed = math.min(missing, amount)
+	if healed > 0 then
+		u.hp += healed
+		u.model:SetAttribute("Hp", math.floor(u.hp))
+	end
+	return healed
+end
+
 function UnitService.unitsNear(pos: Vector3, radius: number, excludeUserId: number?): { Unit }
 	local out = {}
 	for u in all do
-		if u.n.userId ~= excludeUserId then
-			local p = u.root.CFrame.Position
+		if u.n.userId ~= excludeUserId and not u.carried then
+			local p = posOf(u)
 			local d = Vector2.new(p.X - pos.X, p.Z - pos.Z).Magnitude
 			if d <= radius then
 				table.insert(out, u)
@@ -7820,10 +10062,11 @@ function UnitService.unitsNear(pos: Vector3, radius: number, excludeUserId: numb
 	return out
 end
 
+-- Ground units on the battlefield (helicopters and passengers can't capture).
 function UnitService.mainlandUnits(): { Unit }
 	local out = {}
 	for u in all do
-		if u.location == "mainland" then
+		if u.location == "mainland" and not u.carried and not u.air then
 			table.insert(out, u)
 		end
 	end
@@ -7849,7 +10092,9 @@ end
 
 function UnitService.clearNation(n: Nation)
 	for _, u in n.units do
-		UnitService.remove(u, false)
+		if all[u] then
+			UnitService.remove(u, false)
+		end
 	end
 end
 
@@ -7877,14 +10122,11 @@ local function collect(n: Nation, uids: any, filter: ((Unit) -> boolean)?): { Un
 	end
 	return out
 end
+UnitService.collect = collect
 
 ---------------------------------------------------------------------------
 -- Routing: city -> yard -> gate -> bridge -> shore -> battlefield -> ...
 ---------------------------------------------------------------------------
-local function flat(v: Vector3): Vector3
-	return Vector3.new(v.X, 0, v.Z)
-end
-
 -- Waypoints from `from` to `to` through the bridges (straight lines on land).
 function UnitService.route(from: Vector3, to: Vector3): { Vector3 }
 	local zf, i = Grid.zoneAt(from)
@@ -7944,18 +10186,31 @@ function UnitService.route(from: Vector3, to: Vector3): { Vector3 }
 	return cleaned
 end
 
-local function drive(u: Unit, target: Vector3)
-	u.path = UnitService.route(u.root.CFrame.Position, target)
+-- Send a unit somewhere: helicopters fly straight, ground units take the bridges.
+function UnitService.drive(u: Unit, target: Vector3, arrive: string?)
+	if u.carried then
+		return
+	end
+	u.arrive = arrive
+	if u.air then
+		u.path = { flat(target) }
+	else
+		u.path = UnitService.route(posOf(u), target)
+	end
 	local first = table.remove(u.path, 1)
 	if first then
 		setTarget(u, first)
+	else
+		u.model:SetAttribute("Moving", true)
+		u.align.Position = Vector3.new(target.X, u.air and Config.HeliAltitude or u.height, target.Z)
 	end
 end
+local drive = UnitService.drive
 
 -- Theatre a unit is fighting in: "mainland" (battlefield + bridges), the
 -- index of the island it's on, or nil when safe at home.
 local function locate(u: Unit): (string, number?)
-	local zone, idx = Grid.zoneAt(u.root.CFrame.Position)
+	local zone, idx = Grid.zoneAt(posOf(u))
 	if zone == "plot" and idx == u.n.plotIndex then
 		return "home", idx
 	elseif zone == "plot" then
@@ -7988,7 +10243,7 @@ local function canRaid(n: Nation, defender: Nation?): (boolean, string?)
 	return true, nil
 end
 
-local function formation(units: { Unit }, target: Vector3): { Vector3 }
+function UnitService.formation(units: { Unit }, target: Vector3): { Vector3 }
 	local cols = math.ceil(math.sqrt(#units))
 	local spacing = 11
 	local out = {}
@@ -7999,19 +10254,28 @@ local function formation(units: { Unit }, target: Vector3): { Vector3 }
 	end
 	return out
 end
+local formation = UnitService.formation
 
 local function onCommand(player: Player, uids: any, target: any)
 	local n = Nations.get(player)
 	if not n or typeof(target) ~= "Vector3" or target.X ~= target.X or math.abs(target.X) > 1e5 or math.abs(target.Z) > 1e5 then
 		return { ok = false, err = "Invalid request" }
 	end
-	local units = collect(n, uids)
+	local units = collect(n, uids, function(u)
+		return u.carried == nil
+	end)
 	if #units == 0 then
 		return { ok = false, err = "Select units first" }
 	end
 	local zone, idx = Grid.zoneAt(target)
-	if zone == "sea" then
-		return { ok = false, err = "Vehicles can't drive on water" }
+	local onlyAir = true
+	for _, u in units do
+		if not u.air then
+			onlyAir = false
+		end
+	end
+	if zone == "sea" and not onlyAir then
+		return { ok = false, err = "Vehicles can't drive on water - helicopters can fly there" }
 	end
 	if zone == "plot" and idx ~= n.plotIndex then
 		local owner = S.PlotService.ownerAt(target)
@@ -8035,14 +10299,14 @@ local function onDeploy(player: Player, uids: any)
 		return { ok = false }
 	end
 	local units = collect(n, uids, function(u)
-		return u.location == "home"
+		return u.location == "home" and u.carried == nil
 	end)
 	local spots = formation(units, UnitService.stagingPos(n))
 	for i, u in units do
 		drive(u, spots[i])
 	end
 	if #units > 0 then
-		Nations.notify(player, ("%d vehicles rolling out over the bridge to the front"):format(#units), "good")
+		Nations.notify(player, ("%d units rolling out over the bridge to the front"):format(#units), "good")
 	end
 	return { ok = #units > 0, count = #units, err = #units == 0 and "No units at home" or nil }
 end
@@ -8053,33 +10317,76 @@ local function onRecall(player: Player, uids: any)
 		return { ok = false }
 	end
 	local units = collect(n, uids, function(u)
-		return u.location ~= "home"
+		return u.location ~= "home" and u.carried == nil
 	end)
 	for _, u in units do
-		drive(u, homePos(n))
+		drive(u, u.air and UnitService.helipadPos(n) or homePos(n))
 	end
 	return { ok = #units > 0, count = #units, err = #units == 0 and "No units on the battlefield" or nil }
 end
 
--- Advance along the route; refresh where each unit is.
+-- Arrival actions (landing + unloading, squads climbing aboard).
+local function arrived(u: Unit)
+	local action = u.arrive
+	u.arrive = nil
+	if not action then
+		return
+	end
+	if action == "unload" then
+		local count = UnitService.unload(u)
+		local delivered = S.FobService.deliver(u)
+		if count > 0 or delivered > 0 then
+			Nations.notify(u.n.player, ("%s unloaded%s%s"):format(
+				u.def.name,
+				count > 0 and (" %d units"):format(count) or "",
+				delivered > 0 and (" and %d supplies"):format(delivered) or ""
+			), "good")
+		end
+	else
+		local uid = tonumber(string.match(action, "^board:(%d+)$"))
+		local t = uid and u.n.units[uid]
+		if t and all[t] and (flat(posOf(t)) - flat(posOf(u))).Magnitude <= Config.BoardRange then
+			UnitService.board(u, t)
+		end
+	end
+end
+
+-- Advance along routes, land helicopters, refresh where each unit is.
 local function moveStep()
 	for u in all do
-		if u.model:GetAttribute("Moving") then
-			local d = (u.align.Position - u.root.CFrame.Position) * Vector3.new(1, 0, 1)
-			if d.Magnitude < 6 then
-				local nextPoint = table.remove(u.path, 1)
-				if nextPoint then
-					setTarget(u, nextPoint)
-				elseif d.Magnitude < 2 then
-					u.model:SetAttribute("Moving", nil)
+		if not u.carried then
+			if u.model:GetAttribute("Moving") then
+				local d = (u.align.Position - posOf(u)) * Vector3.new(1, 0, 1)
+				if d.Magnitude < 6 then
+					local nextPoint = table.remove(u.path, 1)
+					if nextPoint then
+						setTarget(u, nextPoint)
+					elseif u.air and not u.landed then
+						-- over the destination: come down
+						u.landed = true
+						u.align.Position = Vector3.new(u.align.Position.X, u.height, u.align.Position.Z)
+					elseif d.Magnitude < 2 and (not u.air or math.abs(posOf(u).Y - u.height) < 2) then
+						u.model:SetAttribute("Moving", nil)
+						arrived(u)
+					end
 				end
 			end
+			updateLocation(u)
 		end
-		updateLocation(u)
 	end
 end
 
 UnitService._moveStep = moveStep
+
+-- Land wherever we are now and run the arrival action.
+function UnitService.landNow(u: Unit, action: string?)
+	local p = posOf(u)
+	u.path = {}
+	u.arrive = action
+	u.landed = true
+	u.align.Position = Vector3.new(p.X, u.height, p.Z)
+	u.model:SetAttribute("Moving", true)
+end
 
 ---------------------------------------------------------------------------
 -- Combat loop: battlefield fights, city raids and their defenders
@@ -8115,13 +10422,25 @@ local function buildingTarget(u: Unit, defender: Nation, pos: Vector3): any?
 	return best
 end
 
+local function shot(from: Vector3, to: Vector3, long: boolean)
+	Net.event("Effect"):FireAllClients("Shot", from + Vector3.new(0, 2, 0), to, long)
+end
+
+-- Damage multiplier of `u`'s weapons against `target`'s class.
+local function versus(u: Unit, target: Unit): number
+	return u.def.vs[target.def.class] or 0
+end
+UnitService.versus = versus
+
 local function combatStep()
 	local now = os.clock()
 	local byTheatre: { [string]: { Unit } } = {}
 	for u in all do
-		local t = theatre(u)
-		byTheatre[t] = byTheatre[t] or {}
-		table.insert(byTheatre[t], u)
+		if not u.carried then
+			local t = theatre(u)
+			byTheatre[t] = byTheatre[t] or {}
+			table.insert(byTheatre[t], u)
+		end
 	end
 	for t, units in byTheatre do
 		local plotIdx = tonumber(string.match(t, "^plot(%d+)$"))
@@ -8129,14 +10448,15 @@ local function combatStep()
 		local defender = owner and Nations.get(owner) or nil
 		for _, u in units do
 			if all[u] and u.def.dps > 0 then
-				local pos = u.root.CFrame.Position
+				local pos = posOf(u)
 				-- in a city, only fight when the raid is legal
 				local legal = t == "mainland" or (defender ~= nil and (u.n == defender or raidAllowed(u, defender)))
 				local best, bestD = nil, u.def.range
 				if legal then
 					for _, other in units do
-						if other.n ~= u.n and all[other] and (t == "mainland" or other.n == defender or u.n == defender) then
-							local d = (other.root.CFrame.Position - pos).Magnitude
+						if other.n ~= u.n and all[other] and versus(u, other) > 0 and (t == "mainland" or other.n == defender or u.n == defender) then
+							-- helicopters are engaged by ground distance (anti-air reaches up)
+							local d = other.air and (flat(posOf(other)) - flat(pos)).Magnitude or (posOf(other) - pos).Magnitude
 							if d <= bestD then
 								best, bestD = other, d
 							end
@@ -8146,24 +10466,31 @@ local function combatStep()
 				if best then
 					if now - u.lastShot > 1 then
 						u.lastShot = now
-						Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), best.root.CFrame.Position, u.def.range > 150)
+						shot(pos, posOf(best), u.def.range > 150)
 					end
-					UnitService.damage(best, u.def.dps * STEP, u.n)
-				elseif t == "mainland" then
+					UnitService.damage(best, u.def.dps * STEP * versus(u, best), u.n)
+				elseif t == "mainland" and not u.air then
 					local point = S.ConquestService.enemyPointInRange(pos, u.def.range, u.n.userId)
+					local fob = not point and S.FobService.enemyFobInRange(pos, u.def.range, u.n) or nil
 					if point then
 						if now - u.lastShot > 1.2 then
 							u.lastShot = now
-							Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), point.center + Vector3.new(0, 4, 0), u.def.range > 150)
+							shot(pos, point.center + Vector3.new(0, 4, 0), u.def.range > 150)
 						end
 						S.ConquestService.damageGarrison(point, u.def.dps * STEP, u.n)
+					elseif fob then
+						if now - u.lastShot > 1.2 then
+							u.lastShot = now
+							shot(pos, fob.pos + Vector3.new(0, 3, 0), u.def.range > 150)
+						end
+						S.FobService.damage(fob, u.def.dps * STEP, u.n)
 					end
 				elseif defender and u.n ~= defender and raidAllowed(u, defender) then
 					local b = buildingTarget(u, defender, pos)
 					if b then
 						if now - u.lastShot > 1.2 then
 							u.lastShot = now
-							Net.event("Effect"):FireAllClients("Shot", pos + Vector3.new(0, 2, 0), S.BuildService.worldCFrame(defender, b).Position + Vector3.new(0, 4, 0), u.def.range > 150)
+							shot(pos, S.BuildService.worldCFrame(defender, b).Position + Vector3.new(0, 4, 0), u.def.range > 150)
 						end
 						local wasDamaged = b.damaged
 						S.BuildService.damage(defender, b, u.def.dps * STEP * Config.RaidBuildingDamage)
@@ -8174,7 +10501,27 @@ local function combatStep()
 						end
 						if (raidNotice[defender] or 0) < now then
 							raidNotice[defender] = now + 30
-							Nations.notify(defender.player, ("%s's vehicles are attacking your city!"):format(u.n.player.DisplayName), "bad")
+							Nations.notify(defender.player, ("%s's forces are attacking your city!"):format(u.n.player.DisplayName), "bad")
+						end
+					end
+				end
+			end
+		end
+		-- a city's air defenses fire at enemy helicopters overhead
+		if defender and plotIdx then
+			for _, u in units do
+				if all[u] and u.air and u.n ~= defender and raidAllowed(u, defender) then
+					for _, b in defender.buildings do
+						local ad = b.def.airDefense
+						if ad and Nations.isActive(b) then
+							local c = S.BuildService.worldCFrame(defender, b).Position
+							if (flat(c) - flat(posOf(u))).Magnitude <= ad.range then
+								if math.random() < 0.3 then
+									shot(c + Vector3.new(0, 4, 0), posOf(u), true)
+								end
+								UnitService.damage(u, ad.chance * 30 * STEP, defender)
+								break
+							end
 						end
 					end
 				end
@@ -8221,7 +10568,7 @@ return UnitService
 ]]></string>
           </Properties>
         </Item>
-        <Item class="ModuleScript" referent="47">
+        <Item class="ModuleScript" referent="50">
           <Properties>
             <string name="Name">WorldService</string>
             <string name="Source"><![CDATA[--[[
@@ -8275,27 +10622,27 @@ return WorldService
       </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="48">
+  <Item class="SoundService" referent="51">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="49">
+  <Item class="StarterPlayer" referent="52">
     <Properties>
       <string name="Name">StarterPlayer</string>
       <float name="CameraMaxZoomDistance">450</float>
       <float name="CameraMinZoomDistance">8</float>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="50">
+    <Item class="StarterPlayerScripts" referent="53">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="51">
+      <Item class="Folder" referent="54">
         <Properties>
           <string name="Name">Client</string>
         </Properties>
-        <Item class="ModuleScript" referent="52">
+        <Item class="ModuleScript" referent="55">
           <Properties>
             <string name="Name">ClientState</string>
             <string name="Source"><![CDATA[--[[
@@ -8396,11 +10743,11 @@ return ClientState
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="53">
+        <Item class="Folder" referent="56">
           <Properties>
             <string name="Name">Controllers</string>
           </Properties>
-          <Item class="ModuleScript" referent="54">
+          <Item class="ModuleScript" referent="57">
             <Properties>
               <string name="Name">Animator</string>
               <string name="Source"><![CDATA[--[[
@@ -8409,6 +10756,7 @@ return ClientState
 	  * wind turbine rotors and radar dishes spin, pump jacks rock
 	  * construction progress bars over buildings being built
 	  * fuel trucks drive refinery -> factory -> refinery along the grid
+	  * soldiers' legs swing while they march, helicopter rotors spin
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8434,6 +10782,53 @@ type Spinner = { sub: Model, base: CFrame, speed: number, axis: string, rock: nu
 local spinners: { [Model]: Spinner } = {}
 local bars: { [Model]: { gui: BillboardGui, bar: Lib.Progress, label: TextLabel } } = {}
 local trucks: { [string]: Model } = {}
+
+-- Unit rigs: Motor6D hips (Swing = +-1) and rotor joints (Spin = rad/s).
+type Rig = { hips: { Motor6D }, rotors: { Motor6D }, phase: number }
+local rigs: { [Model]: Rig } = {}
+
+function Animator.registerRig(m: Instance)
+	if not m:IsA("Model") then
+		return
+	end
+	local hips, rotors = {}, {}
+	for _, d in m:GetDescendants() do
+		if d:IsA("Motor6D") then
+			if d:GetAttribute("Swing") then
+				table.insert(hips, d)
+			elseif d:GetAttribute("Spin") then
+				table.insert(rotors, d)
+			end
+		end
+	end
+	if #hips > 0 or #rotors > 0 then
+		rigs[m] = { hips = hips, rotors = rotors, phase = math.random() * 6 }
+	end
+end
+
+-- Returns how many joints were posed this frame.
+function Animator.animateRigs(t: number): number
+	local camPos = camera.CFrame.Position
+	local posed = 0
+	for m, r in rigs do
+		local root = m.PrimaryPart
+		if root and (root.CFrame.Position - camPos).Magnitude < CULL * 1.6 then
+			local moving = m:GetAttribute("Moving") == true
+			for _, hip in r.hips do
+				local swing = (hip:GetAttribute("Swing") :: number?) or 1
+				hip.Transform = moving and CFrame.Angles(math.sin(t * 9 + r.phase) * 0.7 * swing, 0, 0) or CFrame.new()
+				posed += 1
+			end
+			local rate = moving and 1 or 0.45
+			for _, rotor in r.rotors do
+				local spin = (rotor:GetAttribute("Spin") :: number?) or 10
+				rotor.Transform = CFrame.Angles(0, (t + r.phase) * spin * rate % (math.pi * 2), 0)
+				posed += 1
+			end
+		end
+	end
+	return posed
+end
 local refineries: { [Model]: boolean } = {}
 
 local function axisAngles(axis: string, angle: number): CFrame
@@ -8641,9 +11036,22 @@ local function step()
 		end
 	end
 	updateTrucks(now)
+	Animator.animateRigs(t)
 end
 
 function Animator.init()
+	task.spawn(function()
+		local units = workspace:WaitForChild("Units")
+		units.ChildAdded:Connect(function(m)
+			task.defer(Animator.registerRig, m)
+		end)
+		units.ChildRemoved:Connect(function(m)
+			rigs[m :: Model] = nil
+		end)
+		for _, m in units:GetChildren() do
+			Animator.registerRig(m)
+		end
+	end)
 	task.spawn(function()
 		local homeland = workspace:WaitForChild("Homeland")
 		homeland.ChildAdded:Connect(function(c)
@@ -8664,13 +11072,15 @@ return Animator
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="55">
+          <Item class="ModuleScript" referent="58">
             <Properties>
               <string name="Name">ArmyUI</string>
               <string name="Source"><![CDATA[--[[
 	ArmyUI
-	Your forces: unit-type cards with 3D previews, roles, stats and how many
-	are at home vs. out at the front, plus DEPLOY ALL / RECALL ALL / COMMAND.
+	Your forces, grouped into infantry, vehicles and aircraft: unit cards with
+	3D previews, roles, stats and how many are at home vs. out at the front,
+	your FOB (health, supplies, airlift), plus DEPLOY ALL / RECALL ALL /
+	COMMAND.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -8703,10 +11113,22 @@ local ROLE_COLORS = {
 	Artillery = C.Military,
 	["Anti-Air"] = C.Teal,
 	Capture = C.Good,
+	Transport = C.Good,
+	Infantry = C.Accent,
+	["Anti-Tank"] = C.Bad,
+	Recon = C.Teal,
+	["Air Assault"] = C.Info,
+	["Heavy Lift"] = C.Gold,
+}
+
+local GROUPS = {
+	{ class = "infantry", title = "Infantry", sub = "trained at a Barracks" },
+	{ class = "vehicle", title = "Vehicles", sub = "built in Military Factories" },
+	{ class = "air", title = "Aircraft", sub = "built at a Helipad" },
 }
 
 function ArmyUI.open()
-	local win = Modal.open("Army Command", "Build vehicles in Military Factories · they drive over your bridge to the front", 980, 620)
+	local win = Modal.open("Army Command", "Infantry, vehicles and helicopters · drive over your bridge or fly to the front", 1180, 640)
 	local ic = Icons.tank(36, Color3.fromRGB(170, 200, 130))
 	ic.Position = UDim2.fromOffset(8, 6)
 	ic.Parent = win.iconHolder
@@ -8731,7 +11153,7 @@ function ArmyUI.open()
 		Lib.caption(caption, { Parent = card })
 		Lib.display({ Text = value, TextSize = 22, TextColor3 = color, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 0, 26), Parent = card })
 	end
-	stat("Vehicles", ("%d / %d"):format(ClientState.get("units") or #mine, ClientState.get("unitCap") or 10), C.Text, 1)
+	stat("Units", ("%d / %d"):format(ClientState.get("units") or #mine, ClientState.get("unitCap") or 10), C.Text, 1)
 	stat("Out at the front", tostring(deployed), C.Military, 2)
 	local function action(name: string, text: string, variant: string, order: number, fn: () -> ())
 		Lib.button({ Name = name, Variant = variant, Text = text, TextSize = 13, Size = UDim2.fromOffset(150, 44), LayoutOrder = order, Parent = top, Activated = fn })
@@ -8764,45 +11186,112 @@ function ArmyUI.open()
 		end
 	end)
 
-	local list = Lib.scroll({ Position = UDim2.fromOffset(0, 76), Size = UDim2.new(1, 0, 1, -76), Parent = win.body })
-	New("UIGridLayout", { CellSize = UDim2.new(1 / 3, -8, 0, 214), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+	-- FOB status
+	local fobs = ClientState.get("fobs") or {}
+	local fobCard = Lib.card({ Name = "FobCard", Size = UDim2.fromOffset(200, 64), LayoutOrder = 6, Parent = top }, { Lib.pad(8, 10) })
+	if #fobs > 0 then
+		local f = fobs[1]
+		Lib.caption(("FOB · %d / %d supplies"):format(f.supplies, f.cap), { Parent = fobCard })
+		local hp = Lib.progress({ Segments = 10, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 0, 5), Parent = fobCard })
+		hp.set(f.hp / f.maxHp, C.Good)
+		local sup = Lib.progress({ Position = UDim2.fromOffset(0, 27), Size = UDim2.new(1, 0, 0, 4), Parent = fobCard })
+		sup.set(f.supplies / f.cap, C.Gold)
+		Lib.button({
+			Name = "AirliftAll",
+			Variant = "primary",
+			Text = "AIRLIFT TO FOB",
+			TextSize = 11,
+			Position = UDim2.fromOffset(0, 34),
+			Size = UDim2.new(1, 0, 0, 22),
+			Parent = fobCard,
+			Activated = function()
+				local helis = {}
+				for _, m in UnitView.mine() do
+					if m:GetAttribute("Class") == "air" and (m:GetAttribute("Location") or "home") == "home" then
+						table.insert(helis, m:GetAttribute("Uid"))
+					end
+				end
+				local res = Net.request("UnitOrder", "airlift", helis, "fob")
+				if res.ok then
+					Sounds.play("Whoosh")
+					Notifications.show(("%d helicopters loading up for the FOB"):format(res.count or 0), "good")
+				elseif res.err then
+					Notifications.show(#helis == 0 and "No helicopters at home - build a Helipad" or res.err, "info")
+				end
+			end,
+		})
+	else
+		Lib.caption("No FOB yet", { Parent = fobCard })
+		Lib.text({
+			Text = "Drive a Logistics Truck or fly a Chinook to the battlefield, then SET UP FOB.",
+			TextSize = 11,
+			TextWrapped = true,
+			TextColor3 = C.Muted,
+			Position = UDim2.fromOffset(0, 16),
+			Size = UDim2.new(1, 0, 0, 30),
+			Parent = fobCard,
+		})
+	end
+
+	local list = Lib.scroll({ Position = UDim2.fromOffset(0, 76), Size = UDim2.new(1, 0, 1, -76), Parent = win.body }, { Lib.list("y", 10) })
 	local access = { researched = ClientState.get("researched") or {}, passes = ClientState.get("passes") or {} }
-	for i, def in Units.all() do
-		local counts = byType[def.id]
-		local unlocked = Unlocks.check(def, access)
-		if counts or unlocked then
-			local card = Lib.card({ Name = def.id, LayoutOrder = counts and i or 100 + i, Parent = list }, { Lib.pad(8) })
-			local art = Lib.inset({ Size = UDim2.new(1, 0, 0, 92), Parent = card })
-			New("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(38, 48, 40), C.Ink), Rotation = 90, Parent = art })
-			Lib.viewport(ModelBuilder.unit(def), { Parent = art }, 35)
-			local roleCol = ROLE_COLORS[def.role] or C.Text
-			Lib.chip(string.upper(def.role), roleCol:Lerp(C.Ink, 0.75), roleCol, { Position = UDim2.fromOffset(6, 6), Parent = art })
-			Lib.display({ Text = string.upper(def.name), TextSize = 16, Position = UDim2.fromOffset(2, 98), Size = UDim2.new(1, -4, 0, 20), Parent = card })
-			Lib.text({
-				Text = ("HP %d · DMG %d/s · RNG %d · CAP %d"):format(def.hp, def.dps, def.range, def.capture),
-				FontFace = Theme.Font.Mono,
-				TextSize = 10,
-				TextColor3 = C.Muted,
-				Position = UDim2.fromOffset(2, 120),
-				Size = UDim2.new(1, -4, 0, 14),
-				Parent = card,
-			})
-			Lib.text({ Text = def.desc, TextSize = 12, TextColor3 = C.TextSoft, TextWrapped = true, Position = UDim2.fromOffset(2, 136), Size = UDim2.new(1, -4, 0, 30), TextYAlignment = Enum.TextYAlignment.Top, Parent = card })
-			local chips = New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 2, 1, 0), Size = UDim2.new(1, -4, 0, 20), Parent = card }, { Lib.list("x", 6) })
-			if counts then
-				Lib.chip(("%d HOME"):format(counts.home), C.InfoSoft, C.Info, { Parent = chips })
-				Lib.chip(("%d DEPLOYED"):format(counts.mainland), C.BadSoft, C.Military, { Parent = chips })
-			else
-				Lib.chip("NONE BUILT", C.Inset, C.Faint, { Parent = chips })
+	for gi, group in GROUPS do
+		local header = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -8, 0, 22), LayoutOrder = gi * 2 - 1, Parent = list })
+		Lib.display({ Text = string.upper(group.title), TextSize = 15, TextColor3 = C.Accent, Size = UDim2.new(0.5, 0, 1, 0), Parent = header })
+		Lib.text({ Text = group.sub, TextSize = 12, TextColor3 = C.Muted, AnchorPoint = Vector2.new(1, 0), Position = UDim2.fromScale(1, 0), Size = UDim2.new(0.5, 0, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, Parent = header })
+		local grid = New("Frame", {
+			Name = "Group_" .. group.class,
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, -8, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			LayoutOrder = gi * 2,
+			Parent = list,
+		}, { Lib.grid(UDim2.new(1 / 3, -6, 0, 214), 8) })
+		local shown = 0
+		for i, def in Units.all() do
+			local counts = byType[def.id]
+			local unlocked = Unlocks.check(def, access)
+			if def.class == group.class and (counts or unlocked) then
+				shown += 1
+				local card = Lib.card({ Name = def.id, LayoutOrder = counts and i or 100 + i, Parent = grid }, { Lib.pad(8) })
+				local art = Lib.inset({ Size = UDim2.new(1, 0, 0, 92), Parent = card })
+				New("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(38, 48, 40), C.Ink), Rotation = 90, Parent = art })
+				Lib.viewport(ModelBuilder.unit(def), { Parent = art }, 35)
+				local roleCol = ROLE_COLORS[def.role] or C.Text
+				Lib.chip(string.upper(def.role), roleCol:Lerp(C.Ink, 0.75), roleCol, { Position = UDim2.fromOffset(6, 6), Parent = art })
+				Lib.display({ Text = string.upper(def.name), TextSize = 16, Position = UDim2.fromOffset(2, 98), Size = UDim2.new(1, -4, 0, 20), Parent = card })
+				local carry = def.cargo and ("  ·  CARRIES %d SQ%s%s"):format(def.cargo.squads or 0, (def.cargo.supplies or 0) > 0 and (" + " .. def.cargo.supplies .. " SUP") or "", (def.cargo.vehicles or 0) > 0 and " + VEHICLE" or "") or ""
+				Lib.text({
+					Text = ("HP %d · DMG %d/s · RNG %d%s"):format(def.hp, def.dps, def.range, carry),
+					FontFace = Theme.Font.Mono,
+					TextSize = 10,
+					TextColor3 = C.Muted,
+					Position = UDim2.fromOffset(2, 120),
+					Size = UDim2.new(1, -4, 0, 14),
+					Parent = card,
+				})
+				Lib.text({ Text = def.desc, TextSize = 12, TextColor3 = C.TextSoft, TextWrapped = true, Position = UDim2.fromOffset(2, 136), Size = UDim2.new(1, -4, 0, 30), TextYAlignment = Enum.TextYAlignment.Top, Parent = card })
+				local chips = New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 2, 1, 0), Size = UDim2.new(1, -4, 0, 20), Parent = card }, { Lib.list("x", 6) })
+				if counts then
+					Lib.chip(("%d HOME"):format(counts.home), C.InfoSoft, C.Info, { Parent = chips })
+					Lib.chip(("%d DEPLOYED"):format(counts.mainland), C.BadSoft, C.Military, { Parent = chips })
+				else
+					Lib.chip("NONE BUILT", C.Inset, C.Faint, { Parent = chips })
+				end
 			end
+		end
+		if shown == 0 then
+			grid.Visible = false
+			header.Visible = false
 		end
 	end
 	if #mine == 0 then
 		Lib.text({
 			Name = "Empty",
-			Text = "No vehicles yet. Research Mechanized Forces, build a Military Factory, then queue vehicles from its panel.",
+			Text = "No units yet. Build a Barracks for infantry, a Military Factory for vehicles, or a Helipad for helicopters, then queue them from the building's panel.",
 			TextWrapped = true,
 			TextColor3 = C.Muted,
+			Size = UDim2.new(1, -8, 0, 40),
 			LayoutOrder = 999,
 			Parent = list,
 		})
@@ -8817,7 +11306,7 @@ return ArmyUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="56">
+          <Item class="ModuleScript" referent="59">
             <Properties>
               <string name="Name">BuildMenu</string>
               <string name="Source"><![CDATA[--[[
@@ -9532,15 +12021,16 @@ return BuildMenu
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="57">
+          <Item class="ModuleScript" referent="60">
             <Properties>
               <string name="Name">BuildingPanel</string>
               <string name="Source"><![CDATA[--[[
 	BuildingPanel - the Inspector
 	Click any of your buildings: a panel docks on the right (the world stays
 	visible) with a live 3D header, status, a 2x2 stat grid, activity and a
-	building-specific section (fuel destinations, production queue, launcher
-	readiness, billboard text), then Repair / Move / Demolish.
+	building-specific section (fuel destinations, production queue, crops to
+	plant and harvest, launcher readiness, billboard text), then Repair /
+	Move / Demolish.
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -9552,6 +12042,7 @@ local Config = require(Shared.Config)
 local Buildings = require(Shared.Catalog.Buildings)
 local Weapons = require(Shared.Catalog.Weapons)
 local Units = require(Shared.Catalog.Units)
+local Crops = require(Shared.Catalog.Crops)
 local ModelBuilder = require(Shared.ModelBuilder)
 local Unlocks = require(Shared.Util.Unlocks)
 local Format = require(Shared.Util.Format)
@@ -9848,11 +12339,16 @@ function BuildingPanel.open(model: Model)
 			Lib.clear(options)
 			local acc = { researched = ClientState.get("researched") or {}, passes = ClientState.get("passes") or {} }
 			local items = {}
-			for _, w in Weapons.all() do
-				table.insert(items, { kind = "weapon", def = w })
+			local makes = def.factory and def.factory.makes or {}
+			if table.find(makes, "weapon") then
+				for _, w in Weapons.all() do
+					table.insert(items, { kind = "weapon", def = w })
+				end
 			end
 			for _, u in Units.all() do
-				table.insert(items, { kind = "unit", def = u })
+				if table.find(makes, u.class) then
+					table.insert(items, { kind = "unit", def = u })
+				end
 			end
 			for i, item in items do
 				local d = item.def
@@ -9878,7 +12374,7 @@ function BuildingPanel.open(model: Model)
 				Lib.display({ Text = string.upper(item.kind == "weapon" and (d :: any).short or d.name), TextSize = 13, TextColor3 = ok and C.Text or C.Faint, Size = UDim2.new(1, -60, 0, 16), Parent = btn })
 				Lib.display({ Text = "$" .. Format.short(d.cost), TextSize = 12, TextColor3 = ok and C.Good or C.Faint, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(58, 16), TextXAlignment = Enum.TextXAlignment.Right, Parent = btn })
 				Lib.text({
-					Text = ok and ("%d fuel · %d steel · %s"):format(d.fuel, d.steel, Format.duration(d.time)) or "LOCKED",
+					Text = ok and (d.fuel > 0 and ("%d fuel · %d steel · %s"):format(d.fuel, d.steel, Format.duration(d.time)) or ("%d steel · %s"):format(d.steel, Format.duration(d.time))) or "LOCKED",
 					TextSize = 11,
 					FontFace = Theme.Font.BodyBold,
 					TextColor3 = ok and C.Muted or C.Accent,
@@ -9924,6 +12420,107 @@ function BuildingPanel.open(model: Model)
 					end,
 				})
 			end
+		end
+	elseif def.farm then
+		local cropSection, cropTitle = section(scroll, "Field", 4)
+		local status = Lib.display({ Text = "", TextSize = 15, Size = UDim2.new(1, 0, 0, 18), LayoutOrder = 1, Parent = cropSection })
+		local growBar = Lib.progress({ Segments = 12, Size = UDim2.new(1, 0, 0, 8), LayoutOrder = 2, Parent = cropSection })
+		local row = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), LayoutOrder = 3, Parent = cropSection }, { Lib.list("x", 6) })
+		local harvestBtn = Lib.button({
+			Name = "Harvest",
+			Variant = "good",
+			Text = "HARVEST",
+			TextSize = 13,
+			Size = UDim2.fromOffset(120, 34),
+			Parent = row,
+			Activated = function()
+				local res = Net.request("FarmAction", uid, "harvest")
+				if res.ok then
+					Sounds.play("Success")
+				elseif res.err then
+					Notifications.show(res.err, "info")
+				end
+			end,
+		})
+		local autoBtn = Lib.button({
+			Name = "AutoReplant",
+			Variant = "secondary",
+			Text = "AUTO-REPLANT: OFF",
+			TextSize = 11,
+			Size = UDim2.fromOffset(150, 34),
+			Parent = row,
+			Activated = function()
+				Net.request("FarmAction", uid, "auto")
+			end,
+		})
+		Lib.button({
+			Name = "HarvestAll",
+			Variant = "secondary",
+			Text = "HARVEST ALL",
+			TextSize = 11,
+			Size = UDim2.fromOffset(110, 34),
+			Parent = row,
+			Activated = function()
+				local res = Net.request("HarvestAll")
+				if res.ok then
+					Sounds.play("Success")
+					Notifications.show(("Harvested %d fields: +%d food"):format(res.count or 0, res.food or 0), "good")
+				elseif res.err then
+					Notifications.show(res.err, "info")
+				end
+			end,
+		})
+		local plantSection = section(scroll, "Plant a crop", 5)
+		local cropGrid = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = plantSection }, { Lib.grid(UDim2.new(0.5, -4, 0, 62), 6) })
+		for i, crop in Crops.all() do
+			local btn = Lib.button({
+				Name = "Plant_" .. crop.id,
+				LayoutOrder = i,
+				BackgroundColor3 = C.Raised,
+				Parent = cropGrid,
+				Activated = function()
+					local res = Net.request("FarmAction", uid, "plant", crop.id)
+					if res.ok then
+						Sounds.play("Place")
+					elseif res.err then
+						Notifications.show(res.err, "info")
+					end
+				end,
+			}, { Lib.corner(4), Lib.stroke(C.LineSoft), Lib.pad(6, 8) })
+			New("Frame", { BackgroundColor3 = crop.ripe, Size = UDim2.fromOffset(10, 10), Position = UDim2.fromOffset(0, 3), Parent = btn }, { Lib.round() })
+			Lib.display({ Text = string.upper(crop.name), TextSize = 13, Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -70, 0, 16), Parent = btn })
+			Lib.display({ Text = "$" .. crop.seed, TextSize = 12, TextColor3 = C.Good, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(54, 16), TextXAlignment = Enum.TextXAlignment.Right, Parent = btn })
+			Lib.text({ Text = ("%d food · %s"):format(crop.yield, Format.duration(crop.time)), TextSize = 11, FontFace = Theme.Font.BodyBold, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 14), Parent = btn })
+		end
+		Lib.button({
+			Name = "SellFood",
+			Variant = "gold",
+			Text = "SELL ALL FOOD",
+			TextSize = 12,
+			Size = UDim2.fromOffset(160, 32),
+			LayoutOrder = 2,
+			Parent = plantSection,
+			Activated = function()
+				local res = Net.request("SellFood")
+				if res.ok then
+					Sounds.play("Pay")
+					Notifications.show(res.text or "Food sold", "pay")
+				elseif res.err then
+					Notifications.show(res.err, "info")
+				end
+			end,
+		})
+		updateSpecial = function()
+			local crop = Crops.get(model:GetAttribute("Crop") :: string?)
+			local growth = ((model:GetAttribute("Growth") :: number?) or 0) / 100
+			local ripe = crop ~= nil and growth >= 1
+			cropTitle.Text = crop and ("FIELD · %s"):format(string.upper(crop.name)) or "FIELD · EMPTY"
+			status.Text = crop and (ripe and "RIPE - READY TO HARVEST" or ("%s · %d%%"):format(string.upper(Crops.StageNames[Crops.stage(growth)]), math.floor(growth * 100))) or "PICK A CROP BELOW"
+			status.TextColor3 = ripe and C.Good or (crop and C.Text or C.Muted)
+			growBar.set(growth, ripe and C.Good or C.Gold)
+			harvestBtn.Visible = ripe
+			autoBtn.Text = model:GetAttribute("AutoReplant") and "AUTO-REPLANT: ON" or "AUTO-REPLANT: OFF"
+			plantSection.Visible = crop == nil
 		end
 	elseif def.launcher then
 		local special = section(scroll, "Strike", 4)
@@ -9998,7 +12595,11 @@ function BuildingPanel.open(model: Model)
 				setStat(stats[4], "Oil arriving", ("+%s/min"):format(Format.short((model:GetAttribute("OilArriving") :: number?) or 0)), "from your oil pumps", nil)
 			elseif def.factory then
 				local fuel = (model:GetAttribute("Fuel") :: number?) or 0
-				setStat(stats[1], "Fuel stored", ("%s/%s"):format(Format.short(fuel), Format.short(def.fuelCap or 0)), "delivered by trucks", fuel / (def.fuelCap or 1))
+				if def.fuelCap then
+					setStat(stats[1], "Fuel stored", ("%s/%s"):format(Format.short(fuel), Format.short(def.fuelCap)), "delivered by trucks", fuel / def.fuelCap)
+				else
+					setStat(stats[1], "Army", ("%d/%d"):format(d.units or 0, d.unitCap or 0), "units in service", (d.unitCap or 0) > 0 and (d.units or 0) / d.unitCap or 0, C.Info)
+				end
 				setStat(stats[2], "Steel", Format.short(d.steel or 0), ("+%s/min nationally"):format(Format.short(d.steelRate or 0)), (d.steelCap or 0) > 0 and (d.steel or 0) / d.steelCap or 0, C.TextSoft)
 				setStat(stats[3], "Build speed", ("x%s"):format(tostring(def.factory.speed * ((d.passes or {}).FastBuild and 2 or 1))), "Fast Construction doubles it", nil)
 				setStat(stats[4], "Efficiency", Format.percent(eff * 100), "workers, power, road", eff, C.Teal)
@@ -10011,6 +12612,13 @@ function BuildingPanel.open(model: Model)
 				setStat(stats[2], "Launchers ready", l and ("%d/%d"):format(l.ready, l.total) or "0", "of this type", l and l.total > 0 and l.ready / l.total or 0, C.Good)
 				setStat(stats[3], "Reload", reloadUntil > now and Format.duration(reloadUntil - now) or "READY", ("%ds per launch"):format(def.reload or 20), nil)
 				setStat(stats[4], "Hits landed", Format.commas(((d.stats or {}).Hits) or 0), "unlocks better missiles", nil)
+			elseif def.farm then
+				local crop = Crops.get(model:GetAttribute("Crop") :: string?)
+				local growth = ((model:GetAttribute("Growth") :: number?) or 0) / 100
+				setStat(stats[1], "Growth", crop and Format.percent(growth * 100) or "-", crop and crop.name or "nothing planted", growth, C.Good)
+				setStat(stats[2], "Food stored", ("%s/%s"):format(Format.short(d.food or 0), Format.short(d.foodCap or 0)), d.fed and "citizens well fed" or ("citizens eat %s/pay"):format(Format.short(d.foodUse or 0)), (d.foodCap or 0) > 0 and (d.food or 0) / d.foodCap or 0, C.Gold)
+				setStat(stats[3], "Harvest", crop and ("%d food"):format(crop.yield) or "-", "overflow sells for cash", nil)
+				setStat(stats[4], "Efficiency", Format.percent(eff * 100), "farmhands + barns nearby", eff, C.Teal)
 			elseif def.airDefense then
 				local ad = def.airDefense
 				setStat(stats[1], "Range", ("%d"):format(ad.range), "studs · +25% with radar", nil)
@@ -10039,7 +12647,7 @@ function BuildingPanel.open(model: Model)
 				elseif def.service then
 					outText, outSub = Format.short(def.service.serves * eff), string.lower(def.service.kind) .. " coverage"
 				elseif def.storage then
-					outText, outSub = "+" .. Format.short((def.storage.oil or 0) + (def.storage.steel or 0)), "extra storage"
+					outText, outSub = "+" .. Format.short((def.storage.oil or 0) + (def.storage.steel or 0) + (def.storage.food or 0)), def.storage.food and "food storage" or "extra storage"
 				elseif def.depot then
 					outText, outSub = "+" .. def.depot, "army capacity"
 				elseif def.radar then
@@ -10096,7 +12704,7 @@ return BuildingPanel
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="58">
+          <Item class="ModuleScript" referent="61">
             <Properties>
               <string name="Name">Effects</string>
               <string name="Source"><![CDATA[--[[
@@ -10419,6 +13027,37 @@ local function buildDone(pos: Vector3)
 	Sounds.play("Place", 1.3)
 end
 
+-- Harvest: golden burst + floating "+90 FOOD" over the field.
+local function harvest(pos: Vector3, food: number, cash: number?)
+	buildDone(pos)
+	local holder = Instance.new("Part")
+	holder.Anchored = true
+	holder.CanCollide = false
+	holder.CanQuery = false
+	holder.Transparency = 1
+	holder.Size = Vector3.one
+	holder.Position = pos + Vector3.new(0, 6, 0)
+	holder.Parent = fx
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.fromOffset(220, 40)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.Parent = holder
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.TextScaled = true
+	label.FontFace = Font.new("rbxasset://fonts/families/Sarpanch.json", Enum.FontWeight.Bold)
+	label.TextColor3 = Color3.fromRGB(250, 214, 110)
+	label.TextStrokeTransparency = 0.4
+	label.Text = ("+%d FOOD%s"):format(food, (cash or 0) > 0 and ("  +$%d"):format(cash :: number) or "")
+	label.Parent = bb
+	Lib.tween(holder, 1.6, { Position = pos + Vector3.new(0, 16, 0) })
+	Lib.tween(label, 1.6, { TextTransparency = 1, TextStrokeTransparency = 1 })
+	Debris:AddItem(holder, 1.8)
+	Sounds.play("Success", 1.2)
+end
+
 function Effects.init()
 	fx = Instance.new("Folder")
 	fx.Name = "FX"
@@ -10432,6 +13071,8 @@ function Effects.init()
 			tracer(a, b, c == true)
 		elseif kind == "BuildDone" then
 			buildDone(a)
+		elseif kind == "Harvest" then
+			harvest(a, b or 0, c)
 		elseif kind == "Welcome" then
 			Hub.call("showWelcome", b, c)
 		elseif kind == "ResearchDone" then
@@ -10449,7 +13090,7 @@ return Effects
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="59">
+          <Item class="ModuleScript" referent="62">
             <Properties>
               <string name="Name">HUD</string>
               <string name="Source"><![CDATA[--[[
@@ -10657,6 +13298,7 @@ local function buildResources(gui: GuiObject)
 	refs.steel = chip("beam", C.TextSoft, 2)
 	refs.rp = chip("flask", C.Teal, 3)
 	refs.army = chip("tank", Color3.fromRGB(170, 200, 130), 4)
+	refs.food = chip("wheat", Color3.fromRGB(240, 200, 100), 3)
 end
 
 ---------------------------------------------------------------------------
@@ -10906,6 +13548,8 @@ local function refresh()
 	refs.steel.Text = ("STEEL %s/%s"):format(Format.short(d.steel or 0), Format.short(d.steelCap or 0))
 	refs.rp.Text = ("RP %s  +%s/m"):format(Format.short(d.rp or 0), Format.short(d.rpRate or 0))
 	refs.army.Text = ("ARMY %d/%d"):format(d.units or 0, d.unitCap or 0)
+	refs.food.Text = ("FOOD %s/%s%s"):format(Format.short(d.food or 0), Format.short(d.foodCap or 0), d.fed and "  ·  FED" or "")
+	refs.food.TextColor3 = d.fed and C.Good or C.Text
 
 	local pvpOn = d.pvp == true
 	refs.setPvp(pvpOn)
@@ -11015,7 +13659,7 @@ return HUD
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="60">
+          <Item class="ModuleScript" referent="63">
             <Properties>
               <string name="Name">Minimap</string>
               <string name="Source"><![CDATA[--[[
@@ -11141,6 +13785,20 @@ local function redraw()
 				local bridge = dot(bv, 2, C.TextSoft)
 				bridge.Size = UDim2.fromOffset(2, math.max(2, (Grid.gate(i) - Grid.shore(i)).Magnitude * scale))
 				bridge.Rotation = -math.deg(Grid.plotAngle(i))
+			end
+		end
+		local fobs = workspace:FindFirstChild("Mainland") and workspace.Mainland:FindFirstChild("Fobs")
+		if fobs then
+			for _, f in fobs:GetChildren() do
+				local base = f:IsA("Model") and f.PrimaryPart
+				if base then
+					local v = project(base.CFrame.Position, center, scale)
+					if v then
+						local mine = f:GetAttribute("OwnerId") == player.UserId
+						local sq = dot(v, 7, mine and C.Teal or C.Bad)
+						sq.BackgroundTransparency = 0.1
+					end
+				end
 			end
 		end
 		local points = workspace:FindFirstChild("Mainland") and workspace.Mainland:FindFirstChild("Points")
@@ -11307,7 +13965,7 @@ return Minimap
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="61">
+          <Item class="ModuleScript" referent="64">
             <Properties>
               <string name="Name">Modal</string>
               <string name="Source"><![CDATA[--[[
@@ -11557,7 +14215,7 @@ return Modal
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="62">
+          <Item class="ModuleScript" referent="65">
             <Properties>
               <string name="Name">NationUI</string>
               <string name="Source"><![CDATA[--[[
@@ -11914,7 +14572,7 @@ return NationUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="63">
+          <Item class="ModuleScript" referent="66">
             <Properties>
               <string name="Name">NightLights</string>
               <string name="Source"><![CDATA[--[[
@@ -12041,7 +14699,7 @@ return NightLights
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="64">
+          <Item class="ModuleScript" referent="67">
             <Properties>
               <string name="Name">Notifications</string>
               <string name="Source"><![CDATA[--[[
@@ -12190,7 +14848,7 @@ return Notifications
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="65">
+          <Item class="ModuleScript" referent="68">
             <Properties>
               <string name="Name">Placement</string>
               <string name="Source"><![CDATA[--[[
@@ -13062,7 +15720,7 @@ return Placement
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="66">
+          <Item class="ModuleScript" referent="69">
             <Properties>
               <string name="Name">ResearchUI</string>
               <string name="Source"><![CDATA[--[[
@@ -13470,7 +16128,7 @@ return ResearchUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="67">
+          <Item class="ModuleScript" referent="70">
             <Properties>
               <string name="Name">RewardsUI</string>
               <string name="Source"><![CDATA[--[[
@@ -13778,7 +16436,7 @@ return RewardsUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="68">
+          <Item class="ModuleScript" referent="71">
             <Properties>
               <string name="Name">ShopUI</string>
               <string name="Source"><![CDATA[--[[
@@ -14194,7 +16852,7 @@ return ShopUI
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="69">
+          <Item class="ModuleScript" referent="72">
             <Properties>
               <string name="Name">Sounds</string>
               <string name="Source"><![CDATA[--[[
@@ -14265,14 +16923,14 @@ return Sounds
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="70">
+          <Item class="ModuleScript" referent="73">
             <Properties>
               <string name="Name">UnitView</string>
               <string name="Source"><![CDATA[--[[
 	UnitView
-	Nameplates over every vehicle (navy tag with a role icon and the unit
-	name), health bars when damaged, and green selection boxes for the
-	units you have selected.
+	Nameplates over every unit (navy tag with a role icon, the unit name and
+	what it carries: squads, supplies, a slung vehicle), health bars when
+	damaged, and green selection boxes for the units you have selected.
 ]]
 
 local Players = game:GetService("Players")
@@ -14295,16 +16953,22 @@ local listeners: { () -> () } = {}
 
 local NAVY = Color3.fromRGB(24, 40, 70)
 
-local function roleIcon(role: string): string
-	if role == "Artillery" then
-		return "rocket"
-	elseif role == "Capture" then
-		return "truck"
-	elseif role == "Anti-Air" then
-		return "target"
-	end
-	return "tank"
+local ROLE_ICONS = {
+	Artillery = "rocket",
+	Capture = "truck",
+	Transport = "truck",
+	["Anti-Air"] = "target",
+	Infantry = "soldier",
+	["Anti-Tank"] = "soldier",
+	Recon = "soldier",
+	["Air Assault"] = "heli",
+	["Heavy Lift"] = "heli",
+}
+
+function UnitView.roleIcon(role: string): string
+	return ROLE_ICONS[role] or "tank"
 end
+local roleIcon = UnitView.roleIcon
 
 local function decorate(model: Model)
 	if not model:IsA("Model") or not model:GetAttribute("Unit") then
@@ -14351,7 +17015,7 @@ local function decorate(model: Model)
 	ic.AnchorPoint = Vector2.new(0.5, 0.5)
 	ic.Position = UDim2.fromScale(0.5, 0.5)
 	ic.Parent = iconBox
-	Lib.text({
+	local nameLabel = Lib.text({
 		Text = string.upper(def and def.name or model.Name),
 		TextColor3 = Color3.new(1, 1, 1),
 		FontFace = Theme.Font.Bold,
@@ -14362,6 +17026,29 @@ local function decorate(model: Model)
 		LayoutOrder = 2,
 		Parent = tag,
 	})
+	local function updateCargo()
+		local parts = { string.upper(def and def.name or model.Name) }
+		local cargo = model:GetAttribute("Cargo") :: number?
+		local supplies = model:GetAttribute("Supplies") :: number?
+		local slung = model:GetAttribute("Slung") :: string?
+		if cargo then
+			table.insert(parts, ("%d SQ"):format(cargo))
+		end
+		if supplies then
+			table.insert(parts, ("%d SUP"):format(supplies))
+		end
+		if slung then
+			table.insert(parts, "+" .. string.upper(slung))
+		end
+		nameLabel.Text = table.concat(parts, " · ")
+	end
+	for _, attr in { "Cargo", "Supplies", "Slung" } do
+		model:GetAttributeChangedSignal(attr):Connect(updateCargo)
+	end
+	updateCargo()
+	if model:GetAttribute("Class") == "air" then
+		gui.StudsOffsetWorldSpace = Vector3.new(0, 8, 0)
+	end
 	local hpBar = Lib.progress({
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 26),
@@ -14423,6 +17110,16 @@ function UnitView.selectedUids(): { number }
 	return out
 end
 
+function UnitView.selectedModels(): { Model }
+	local out = {}
+	for m in selected do
+		if m.Parent then
+			table.insert(out, m)
+		end
+	end
+	return out
+end
+
 function UnitView.count(): number
 	local c = 0
 	for m in selected do
@@ -14473,7 +17170,7 @@ return UnitView
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="71">
+          <Item class="ModuleScript" referent="74">
             <Properties>
               <string name="Name">WarView</string>
               <string name="Source"><![CDATA[--[[
@@ -14498,6 +17195,7 @@ local Shared = ReplicatedStorage.Shared
 local Config = require(Shared.Config)
 local Grid = require(Shared.Util.Grid)
 local Weapons = require(Shared.Catalog.Weapons)
+local Units = require(Shared.Catalog.Units)
 local ModelBuilder = require(Shared.ModelBuilder)
 local Unlocks = require(Shared.Util.Unlocks)
 local Flag = require(Shared.Util.Flag)
@@ -14531,6 +17229,9 @@ local selectBox: Frame
 local blastRing: Part
 local pointLabels: { [Instance]: BillboardGui } = {}
 local plotLabels: { BillboardGui } = {}
+local fobLabels: { [Instance]: BillboardGui } = {}
+local ordersPanel: Frame
+local orderButtons: { [string]: TextButton } = {}
 
 local focus = Vector3.zero
 local height = 620
@@ -14591,7 +17292,7 @@ local function unitUnder(screen: Vector2): Model?
 	for _, m in UnitView.mine() do
 		local root = m.PrimaryPart
 		if root then
-			local sp, onScreen = camera:WorldToScreenPoint(root.Position)
+			local sp, onScreen = camera:WorldToScreenPoint(root.CFrame.Position)
 			if onScreen then
 				local d = (Vector2.new(sp.X, sp.Y) - screen).Magnitude
 				if d < bestD then
@@ -14863,11 +17564,141 @@ local function makePlotLabels()
 	end
 end
 
+-- Label over a FOB: owner, health and supplies.
+local function makeFobLabel(fob: Instance)
+	if not fob:IsA("Model") or fobLabels[fob] then
+		return
+	end
+	local base = fob:WaitForChild("Base", 5) :: BasePart?
+	if not base then
+		return
+	end
+	local mine = fob:GetAttribute("OwnerId") == player.UserId
+	local bb = New("BillboardGui", {
+		Name = "FobLabel",
+		Adornee = base,
+		Size = UDim2.fromOffset(200, 58),
+		StudsOffsetWorldSpace = Vector3.new(0, 26, 0),
+		AlwaysOnTop = true,
+		MaxDistance = 6000,
+		LightInfluence = 0,
+		Enabled = ClientState.mode == "war",
+		Parent = labelParent,
+	})
+	local tag = New("Frame", {
+		BackgroundColor3 = C.Panel,
+		BackgroundTransparency = 0.12,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0),
+		Size = UDim2.fromOffset(190, 52),
+		Parent = bb,
+	}, { Lib.corner(3), Lib.stroke(mine and C.Teal or C.Line, 1, 0.3), Lib.pad(5, 9) })
+	New("Frame", { BackgroundColor3 = (fob:GetAttribute("Color") :: Color3?) or C.Muted, BorderSizePixel = 0, Position = UDim2.new(0, -9, 0, -5), Size = UDim2.new(0, 3, 1, 10), Parent = tag })
+	Lib.display({ Text = ("FOB · %s"):format(mine and "YOURS" or string.upper((fob:GetAttribute("OwnerName") :: string?) or "")), TextSize = 13, Size = UDim2.new(1, 0, 0, 15), Parent = tag })
+	local hpBar = Lib.progress({ Segments = 10, Position = UDim2.fromOffset(0, 20), Size = UDim2.new(1, 0, 0, 5), Parent = tag })
+	local supBar = Lib.progress({ Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 4), Parent = tag })
+	local supText = Lib.text({ Text = "", FontFace = Theme.Font.Mono, TextSize = 10, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 35), Size = UDim2.new(1, 0, 0, 12), Parent = tag })
+	local function update()
+		local hp = (fob:GetAttribute("Hp") :: number?) or 0
+		local max = (fob:GetAttribute("MaxHp") :: number?) or 1
+		local sup = (fob:GetAttribute("Supplies") :: number?) or 0
+		local cap = (fob:GetAttribute("SupplyCap") :: number?) or 1
+		hpBar.set(hp / max, hp / max > 0.35 and C.Good or C.Bad)
+		supBar.set(sup / cap, C.Gold)
+		supText.Text = ("HP %d · SUPPLIES %d/%d"):format(hp, sup, cap)
+	end
+	fob.AttributeChanged:Connect(update)
+	update()
+	fobLabels[fob] = bb
+	pcall(function()
+		fob.Destroying:Connect(function()
+			fobLabels[fob] = nil
+			bb:Destroy()
+		end)
+	end)
+end
+
+---------------------------------------------------------------------------
+-- Field orders for the selected units
+---------------------------------------------------------------------------
+local ORDERS = {
+	{ key = "mount", order = "mount", label = "MOUNT UP", sub = "squads board transports" },
+	{ key = "dismount", order = "dismount", label = "DISMOUNT", sub = "everyone out here" },
+	{ key = "loadSupplies", order = "loadSupplies", label = "LOAD SUPPLIES", sub = "at home · 1 food + 1 steel each" },
+	{ key = "unloadSupplies", order = "unloadSupplies", label = "UNLOAD AT FOB", sub = "fill the supply dump" },
+	{ key = "fob", order = "fob", label = "SET UP FOB", sub = ("%s + %d steel"):format(Format.cash(Config.FobCost), Config.FobSteel) },
+	{ key = "airliftFob", order = "airlift", arg = "fob", label = "AIRLIFT TO FOB", sub = "loads squads, supplies, a vehicle" },
+	{ key = "airliftHome", order = "airlift", arg = "home", label = "AIRLIFT HOME", sub = "picks up squads at the FOB" },
+}
+
+function WarView.refreshOrders()
+	if not ordersPanel then
+		return
+	end
+	local f = { mount = false, dismount = false, loadSupplies = false, unloadSupplies = false, fob = false, airliftFob = false, airliftHome = false }
+	local hasFob = #(ClientState.get("fobs") or {}) > 0
+	for _, m in UnitView.selectedModels() do
+		local def = Units.get(m:GetAttribute("UnitId") :: string)
+		if def then
+			local loc = (m:GetAttribute("Location") :: string?) or "home"
+			local supplies = def.cargo and def.cargo.supplies or 0
+			if def.class == "infantry" then
+				f.mount = true
+			end
+			if m:GetAttribute("Cargo") or m:GetAttribute("Slung") then
+				f.dismount = true
+			end
+			if supplies > 0 and loc == "home" then
+				f.loadSupplies = true
+			end
+			if (m:GetAttribute("Supplies") or 0) > 0 and hasFob then
+				f.unloadSupplies = true
+			end
+			if def.fob and loc == "mainland" then
+				f.fob = true
+			end
+			if def.class == "air" and def.cargo then
+				f.airliftFob = hasFob
+				f.airliftHome = loc ~= "home"
+			end
+		end
+	end
+	local any = false
+	for key, btn in orderButtons do
+		btn.Visible = f[key] == true
+		any = any or btn.Visible
+	end
+	ordersPanel.Visible = any
+end
+
+local function giveOrder(o)
+	local uids = UnitView.selectedUids()
+	local res = Net.request("UnitOrder", o.order, uids, o.arg)
+	if res.ok then
+		Sounds.play("Click", 1.1)
+		local done = {
+			mount = "%d squads boarding",
+			dismount = "%d units out",
+			loadSupplies = "%d supplies loaded",
+			unloadSupplies = "%d supplies delivered to the FOB",
+			airlift = "%d helicopters on the airlift",
+		}
+		local text = done[o.order]
+		Notifications.show(text and text:format(res.count or 0) or "FOB established", "good")
+	elseif res.err then
+		Notifications.show(res.err, "bad")
+	end
+	task.delay(0.3, WarView.refreshOrders)
+end
+
 local function setLabels(on: boolean)
 	for _, bb in pointLabels do
 		bb.Enabled = on
 	end
 	for _, bb in plotLabels do
+		bb.Enabled = on
+	end
+	for _, bb in fobLabels do
 		bb.Enabled = on
 	end
 end
@@ -15184,7 +18015,7 @@ local function finishBox(endPos: Vector2, additive: boolean)
 			local root = m.PrimaryPart
 			if root then
 				-- WorldToScreenPoint is in GUI space, same as InputObject.Position
-				local sp, onScreen = camera:WorldToScreenPoint(root.Position)
+				local sp, onScreen = camera:WorldToScreenPoint(root.CFrame.Position)
 				local p = Vector2.new(sp.X, sp.Y)
 				if onScreen and p.X >= minV.X and p.X <= maxV.X and p.Y >= minV.Y and p.Y <= maxV.Y then
 					UnitView.select(m, true)
@@ -15312,6 +18143,33 @@ function WarView.init(screen: GuiObject)
 	readout.grid = Lib.text({ Name = "Grid", Text = "", FontFace = Theme.Font.Mono, TextSize = 12, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 44), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
 	readout.sel = Lib.display({ Name = "Selected", Text = "0 SELECTED", TextSize = 12, TextColor3 = C.Teal, Position = UDim2.fromOffset(0, 64), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
 
+	ordersPanel = Lib.panel({
+		Name = "Orders",
+		Position = UDim2.fromOffset(16, 216),
+		Size = UDim2.fromOffset(300, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		Parent = warOverlay,
+	}, { Lib.pad(10, 12), Lib.list("y", 6) })
+	Lib.caption("Field orders", { TextColor3 = C.Accent, LayoutOrder = 0, Parent = ordersPanel })
+	for i, o in ORDERS do
+		local btn = Lib.button({
+			Name = "Order_" .. o.key,
+			Variant = (o.order == "fob" or o.order == "airlift") and "primary" or "secondary",
+			Text = "",
+			Size = UDim2.new(1, 0, 0, 40),
+			LayoutOrder = i,
+			Visible = false,
+			Parent = ordersPanel,
+			Activated = function()
+				giveOrder(o)
+			end,
+		})
+		Lib.display({ Text = o.label, TextSize = 14, TextColor3 = btn.TextColor3, Position = UDim2.fromOffset(12, 3), Size = UDim2.new(1, -24, 0, 18), Parent = btn })
+		Lib.text({ Text = o.sub, TextSize = 11, TextColor3 = btn.TextColor3, TextTransparency = 0.25, Position = UDim2.fromOffset(12, 21), Size = UDim2.new(1, -24, 0, 14), Parent = btn })
+		orderButtons[o.key] = btn
+	end
+
 	hotbar = New("Frame", {
 		Name = "Hotbar",
 		AnchorPoint = Vector2.new(0.5, 1),
@@ -15424,10 +18282,12 @@ function WarView.init(screen: GuiObject)
 			task.wait(0.5)
 			if ClientState.mode == "war" then
 				WarView.refreshHotbar()
+				WarView.refreshOrders()
 			end
 		end
 	end)
 	UnitView.onSelectionChanged(WarView.refreshHint)
+	UnitView.onSelectionChanged(WarView.refreshOrders)
 
 	-- labels
 	task.spawn(function()
@@ -15441,6 +18301,15 @@ function WarView.init(screen: GuiObject)
 		end)
 	end)
 	task.spawn(makePlotLabels)
+	task.spawn(function()
+		local fobs = workspace:WaitForChild("Mainland"):WaitForChild("Fobs")
+		for _, f in fobs:GetChildren() do
+			task.spawn(makeFobLabel, f)
+		end
+		fobs.ChildAdded:Connect(function(f)
+			makeFobLabel(f)
+		end)
+	end)
 
 	Hub.openTravel = WarView.openTravel
 	Hub.goWar = WarView.go
@@ -15452,7 +18321,7 @@ return WarView
             </Properties>
           </Item>
         </Item>
-        <Item class="ModuleScript" referent="72">
+        <Item class="ModuleScript" referent="75">
           <Properties>
             <string name="Name">Hub</string>
             <string name="Source"><![CDATA[--[[
@@ -15477,7 +18346,7 @@ return Hub
 ]]></string>
           </Properties>
         </Item>
-        <Item class="LocalScript" referent="73">
+        <Item class="LocalScript" referent="76">
           <Properties>
             <string name="Name">Main</string>
             <string name="Source"><![CDATA[--[[
@@ -15597,11 +18466,11 @@ end
 ]]></string>
           </Properties>
         </Item>
-        <Item class="Folder" referent="74">
+        <Item class="Folder" referent="77">
           <Properties>
             <string name="Name">UI</string>
           </Properties>
-          <Item class="ModuleScript" referent="75">
+          <Item class="ModuleScript" referent="78">
             <Properties>
               <string name="Name">Icons</string>
               <string name="Source"><![CDATA[--[[
@@ -15901,6 +18770,39 @@ function Icons.undo(size: number, color: Color3): Frame
 	return f
 end
 
+function Icons.heli(size: number, color: Color3): Frame
+	local f = box(size)
+	rect(f, 0.5, 0.18, 0.92, 0.07, color, 0, 0.5) -- rotor
+	rect(f, 0.5, 0.27, 0.07, 0.14, color)
+	rect(f, 0.42, 0.52, 0.5, 0.3, color, 0, 0.45) -- cabin
+	rect(f, 0.78, 0.46, 0.38, 0.08, color, 0, 0.5) -- tail boom
+	rect(f, 0.94, 0.38, 0.06, 0.2, color)
+	rect(f, 0.42, 0.8, 0.56, 0.05, color) -- skid
+	return f
+end
+
+function Icons.soldier(size: number, color: Color3): Frame
+	local f = box(size)
+	rect(f, 0.5, 0.2, 0.38, 0.22, color, 0, 1) -- helmet
+	rect(f, 0.5, 0.29, 0.26, 0.12, color, 0, 0.4)
+	rect(f, 0.5, 0.56, 0.42, 0.38, color, 0, 0.15) -- torso
+	rect(f, 0.38, 0.86, 0.14, 0.26, color, 0, 0.2)
+	rect(f, 0.62, 0.86, 0.14, 0.26, color, 0, 0.2)
+	rect(f, 0.62, 0.5, 0.62, 0.07, color, -12, 0.5) -- rifle
+	return f
+end
+
+function Icons.wheat(size: number, color: Color3): Frame
+	local f = box(size)
+	rect(f, 0.5, 0.62, 0.06, 0.66, color)
+	for i = 0, 3 do
+		local y = 0.2 + i * 0.13
+		rect(f, 0.38, y, 0.16, 0.1, color, 30, 1)
+		rect(f, 0.62, y, 0.16, 0.1, color, -30, 1)
+	end
+	return f
+end
+
 function Icons.get(name: string, size: number, color: Color3?): Frame
 	local fn = (Icons :: any)[name]
 	if type(fn) ~= "function" then
@@ -15913,7 +18815,7 @@ return Icons
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="76">
+          <Item class="ModuleScript" referent="79">
             <Properties>
               <string name="Name">Lib</string>
               <string name="Source"><![CDATA[--[[
@@ -16434,7 +19336,7 @@ return Lib
 ]]></string>
             </Properties>
           </Item>
-          <Item class="ModuleScript" referent="77">
+          <Item class="ModuleScript" referent="80">
             <Properties>
               <string name="Name">Theme</string>
               <string name="Source"><![CDATA[--[[
@@ -16569,7 +19471,7 @@ return Theme
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="78">
+  <Item class="Workspace" referent="81">
     <Properties>
       <string name="Name">Workspace</string>
       <float name="Gravity">196.2</float>

@@ -28,6 +28,8 @@ local S = {
 	MonetizationService = require(Services.MonetizationService),
 	RewardService = require(Services.RewardService),
 	NationService = require(Services.NationService),
+	FobService = require(Services.FobService),
+	FarmService = require(Services.FarmService),
 	WorldService = require(Services.WorldService),
 }
 
@@ -42,6 +44,8 @@ local ORDER = {
 	"ResearchService",
 	"UnitService",
 	"ConquestService",
+	"FobService",
+	"FarmService",
 	"CombatService",
 	"MonetizationService",
 	"RewardService",
@@ -122,6 +126,7 @@ local function onLoaded(player: Player, data: { [string]: any })
 		shieldUntil = data.FirstJoin + Config.NewPlayerShield,
 		undo = {},
 		units = {},
+		fobs = {},
 		nextUnitUid = 1,
 		sent = {},
 		ready = false,
@@ -142,6 +147,7 @@ local function onLoaded(player: Player, data: { [string]: any })
 	end
 	S.EconomyService.compute(n, 0)
 	S.UnitService.loadNation(n)
+	S.FobService.loadNation(n)
 	S.RewardService.onJoin(n)
 	S.NationService.onJoin(n)
 	n.ready = true
@@ -154,6 +160,7 @@ S.DataService.beforeSave(function(player, _data)
 	if n and n.ready then
 		S.BuildService.serialize(n)
 		S.UnitService.serialize(n)
+		S.FobService.serialize(n)
 	end
 end)
 
@@ -175,6 +182,7 @@ Players.PlayerRemoving:Connect(function(player)
 	if n then
 		n.ready = false
 		S.UnitService.clearNation(n)
+		S.FobService.clearNation(n)
 		Nations.remove(player)
 	end
 	S.PlotService.release(player)

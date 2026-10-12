@@ -20,6 +20,7 @@ local Shared = ReplicatedStorage.Shared
 local Config = require(Shared.Config)
 local Grid = require(Shared.Util.Grid)
 local Weapons = require(Shared.Catalog.Weapons)
+local Units = require(Shared.Catalog.Units)
 local ModelBuilder = require(Shared.ModelBuilder)
 local Unlocks = require(Shared.Util.Unlocks)
 local Flag = require(Shared.Util.Flag)
@@ -53,6 +54,9 @@ local selectBox: Frame
 local blastRing: Part
 local pointLabels: { [Instance]: BillboardGui } = {}
 local plotLabels: { BillboardGui } = {}
+local fobLabels: { [Instance]: BillboardGui } = {}
+local ordersPanel: Frame
+local orderButtons: { [string]: TextButton } = {}
 
 local focus = Vector3.zero
 local height = 620
@@ -113,7 +117,7 @@ local function unitUnder(screen: Vector2): Model?
 	for _, m in UnitView.mine() do
 		local root = m.PrimaryPart
 		if root then
-			local sp, onScreen = camera:WorldToScreenPoint(root.Position)
+			local sp, onScreen = camera:WorldToScreenPoint(root.CFrame.Position)
 			if onScreen then
 				local d = (Vector2.new(sp.X, sp.Y) - screen).Magnitude
 				if d < bestD then
@@ -385,11 +389,141 @@ local function makePlotLabels()
 	end
 end
 
+-- Label over a FOB: owner, health and supplies.
+local function makeFobLabel(fob: Instance)
+	if not fob:IsA("Model") or fobLabels[fob] then
+		return
+	end
+	local base = fob:WaitForChild("Base", 5) :: BasePart?
+	if not base then
+		return
+	end
+	local mine = fob:GetAttribute("OwnerId") == player.UserId
+	local bb = New("BillboardGui", {
+		Name = "FobLabel",
+		Adornee = base,
+		Size = UDim2.fromOffset(200, 58),
+		StudsOffsetWorldSpace = Vector3.new(0, 26, 0),
+		AlwaysOnTop = true,
+		MaxDistance = 6000,
+		LightInfluence = 0,
+		Enabled = ClientState.mode == "war",
+		Parent = labelParent,
+	})
+	local tag = New("Frame", {
+		BackgroundColor3 = C.Panel,
+		BackgroundTransparency = 0.12,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0),
+		Size = UDim2.fromOffset(190, 52),
+		Parent = bb,
+	}, { Lib.corner(3), Lib.stroke(mine and C.Teal or C.Line, 1, 0.3), Lib.pad(5, 9) })
+	New("Frame", { BackgroundColor3 = (fob:GetAttribute("Color") :: Color3?) or C.Muted, BorderSizePixel = 0, Position = UDim2.new(0, -9, 0, -5), Size = UDim2.new(0, 3, 1, 10), Parent = tag })
+	Lib.display({ Text = ("FOB · %s"):format(mine and "YOURS" or string.upper((fob:GetAttribute("OwnerName") :: string?) or "")), TextSize = 13, Size = UDim2.new(1, 0, 0, 15), Parent = tag })
+	local hpBar = Lib.progress({ Segments = 10, Position = UDim2.fromOffset(0, 20), Size = UDim2.new(1, 0, 0, 5), Parent = tag })
+	local supBar = Lib.progress({ Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 4), Parent = tag })
+	local supText = Lib.text({ Text = "", FontFace = Theme.Font.Mono, TextSize = 10, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 35), Size = UDim2.new(1, 0, 0, 12), Parent = tag })
+	local function update()
+		local hp = (fob:GetAttribute("Hp") :: number?) or 0
+		local max = (fob:GetAttribute("MaxHp") :: number?) or 1
+		local sup = (fob:GetAttribute("Supplies") :: number?) or 0
+		local cap = (fob:GetAttribute("SupplyCap") :: number?) or 1
+		hpBar.set(hp / max, hp / max > 0.35 and C.Good or C.Bad)
+		supBar.set(sup / cap, C.Gold)
+		supText.Text = ("HP %d · SUPPLIES %d/%d"):format(hp, sup, cap)
+	end
+	fob.AttributeChanged:Connect(update)
+	update()
+	fobLabels[fob] = bb
+	pcall(function()
+		fob.Destroying:Connect(function()
+			fobLabels[fob] = nil
+			bb:Destroy()
+		end)
+	end)
+end
+
+---------------------------------------------------------------------------
+-- Field orders for the selected units
+---------------------------------------------------------------------------
+local ORDERS = {
+	{ key = "mount", order = "mount", label = "MOUNT UP", sub = "squads board transports" },
+	{ key = "dismount", order = "dismount", label = "DISMOUNT", sub = "everyone out here" },
+	{ key = "loadSupplies", order = "loadSupplies", label = "LOAD SUPPLIES", sub = "at home · 1 food + 1 steel each" },
+	{ key = "unloadSupplies", order = "unloadSupplies", label = "UNLOAD AT FOB", sub = "fill the supply dump" },
+	{ key = "fob", order = "fob", label = "SET UP FOB", sub = ("%s + %d steel"):format(Format.cash(Config.FobCost), Config.FobSteel) },
+	{ key = "airliftFob", order = "airlift", arg = "fob", label = "AIRLIFT TO FOB", sub = "loads squads, supplies, a vehicle" },
+	{ key = "airliftHome", order = "airlift", arg = "home", label = "AIRLIFT HOME", sub = "picks up squads at the FOB" },
+}
+
+function WarView.refreshOrders()
+	if not ordersPanel then
+		return
+	end
+	local f = { mount = false, dismount = false, loadSupplies = false, unloadSupplies = false, fob = false, airliftFob = false, airliftHome = false }
+	local hasFob = #(ClientState.get("fobs") or {}) > 0
+	for _, m in UnitView.selectedModels() do
+		local def = Units.get(m:GetAttribute("UnitId") :: string)
+		if def then
+			local loc = (m:GetAttribute("Location") :: string?) or "home"
+			local supplies = def.cargo and def.cargo.supplies or 0
+			if def.class == "infantry" then
+				f.mount = true
+			end
+			if m:GetAttribute("Cargo") or m:GetAttribute("Slung") then
+				f.dismount = true
+			end
+			if supplies > 0 and loc == "home" then
+				f.loadSupplies = true
+			end
+			if (m:GetAttribute("Supplies") or 0) > 0 and hasFob then
+				f.unloadSupplies = true
+			end
+			if def.fob and loc == "mainland" then
+				f.fob = true
+			end
+			if def.class == "air" and def.cargo then
+				f.airliftFob = hasFob
+				f.airliftHome = loc ~= "home"
+			end
+		end
+	end
+	local any = false
+	for key, btn in orderButtons do
+		btn.Visible = f[key] == true
+		any = any or btn.Visible
+	end
+	ordersPanel.Visible = any
+end
+
+local function giveOrder(o)
+	local uids = UnitView.selectedUids()
+	local res = Net.request("UnitOrder", o.order, uids, o.arg)
+	if res.ok then
+		Sounds.play("Click", 1.1)
+		local done = {
+			mount = "%d squads boarding",
+			dismount = "%d units out",
+			loadSupplies = "%d supplies loaded",
+			unloadSupplies = "%d supplies delivered to the FOB",
+			airlift = "%d helicopters on the airlift",
+		}
+		local text = done[o.order]
+		Notifications.show(text and text:format(res.count or 0) or "FOB established", "good")
+	elseif res.err then
+		Notifications.show(res.err, "bad")
+	end
+	task.delay(0.3, WarView.refreshOrders)
+end
+
 local function setLabels(on: boolean)
 	for _, bb in pointLabels do
 		bb.Enabled = on
 	end
 	for _, bb in plotLabels do
+		bb.Enabled = on
+	end
+	for _, bb in fobLabels do
 		bb.Enabled = on
 	end
 end
@@ -706,7 +840,7 @@ local function finishBox(endPos: Vector2, additive: boolean)
 			local root = m.PrimaryPart
 			if root then
 				-- WorldToScreenPoint is in GUI space, same as InputObject.Position
-				local sp, onScreen = camera:WorldToScreenPoint(root.Position)
+				local sp, onScreen = camera:WorldToScreenPoint(root.CFrame.Position)
 				local p = Vector2.new(sp.X, sp.Y)
 				if onScreen and p.X >= minV.X and p.X <= maxV.X and p.Y >= minV.Y and p.Y <= maxV.Y then
 					UnitView.select(m, true)
@@ -834,6 +968,33 @@ function WarView.init(screen: GuiObject)
 	readout.grid = Lib.text({ Name = "Grid", Text = "", FontFace = Theme.Font.Mono, TextSize = 12, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 44), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
 	readout.sel = Lib.display({ Name = "Selected", Text = "0 SELECTED", TextSize = 12, TextColor3 = C.Teal, Position = UDim2.fromOffset(0, 64), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
 
+	ordersPanel = Lib.panel({
+		Name = "Orders",
+		Position = UDim2.fromOffset(16, 216),
+		Size = UDim2.fromOffset(300, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		Visible = false,
+		Parent = warOverlay,
+	}, { Lib.pad(10, 12), Lib.list("y", 6) })
+	Lib.caption("Field orders", { TextColor3 = C.Accent, LayoutOrder = 0, Parent = ordersPanel })
+	for i, o in ORDERS do
+		local btn = Lib.button({
+			Name = "Order_" .. o.key,
+			Variant = (o.order == "fob" or o.order == "airlift") and "primary" or "secondary",
+			Text = "",
+			Size = UDim2.new(1, 0, 0, 40),
+			LayoutOrder = i,
+			Visible = false,
+			Parent = ordersPanel,
+			Activated = function()
+				giveOrder(o)
+			end,
+		})
+		Lib.display({ Text = o.label, TextSize = 14, TextColor3 = btn.TextColor3, Position = UDim2.fromOffset(12, 3), Size = UDim2.new(1, -24, 0, 18), Parent = btn })
+		Lib.text({ Text = o.sub, TextSize = 11, TextColor3 = btn.TextColor3, TextTransparency = 0.25, Position = UDim2.fromOffset(12, 21), Size = UDim2.new(1, -24, 0, 14), Parent = btn })
+		orderButtons[o.key] = btn
+	end
+
 	hotbar = New("Frame", {
 		Name = "Hotbar",
 		AnchorPoint = Vector2.new(0.5, 1),
@@ -946,10 +1107,12 @@ function WarView.init(screen: GuiObject)
 			task.wait(0.5)
 			if ClientState.mode == "war" then
 				WarView.refreshHotbar()
+				WarView.refreshOrders()
 			end
 		end
 	end)
 	UnitView.onSelectionChanged(WarView.refreshHint)
+	UnitView.onSelectionChanged(WarView.refreshOrders)
 
 	-- labels
 	task.spawn(function()
@@ -963,6 +1126,15 @@ function WarView.init(screen: GuiObject)
 		end)
 	end)
 	task.spawn(makePlotLabels)
+	task.spawn(function()
+		local fobs = workspace:WaitForChild("Mainland"):WaitForChild("Fobs")
+		for _, f in fobs:GetChildren() do
+			task.spawn(makeFobLabel, f)
+		end
+		fobs.ChildAdded:Connect(function(f)
+			makeFobLabel(f)
+		end)
+	end)
 
 	Hub.openTravel = WarView.openTravel
 	Hub.goWar = WarView.go

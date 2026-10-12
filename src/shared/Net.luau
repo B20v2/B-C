@@ -36,6 +36,10 @@ Net.Functions = {
 	"RedeemCode",
 	"SetBillboard",
 	"SetNation",
+	"UnitOrder",
+	"FarmAction",
+	"HarvestAll",
+	"SellFood",
 	"GetSnapshot",
 	"StudioPurchase",
 }

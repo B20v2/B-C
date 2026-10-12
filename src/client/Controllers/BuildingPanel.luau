@@ -2,8 +2,9 @@
 	BuildingPanel - the Inspector
 	Click any of your buildings: a panel docks on the right (the world stays
 	visible) with a live 3D header, status, a 2x2 stat grid, activity and a
-	building-specific section (fuel destinations, production queue, launcher
-	readiness, billboard text), then Repair / Move / Demolish.
+	building-specific section (fuel destinations, production queue, crops to
+	plant and harvest, launcher readiness, billboard text), then Repair /
+	Move / Demolish.
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -15,6 +16,7 @@ local Config = require(Shared.Config)
 local Buildings = require(Shared.Catalog.Buildings)
 local Weapons = require(Shared.Catalog.Weapons)
 local Units = require(Shared.Catalog.Units)
+local Crops = require(Shared.Catalog.Crops)
 local ModelBuilder = require(Shared.ModelBuilder)
 local Unlocks = require(Shared.Util.Unlocks)
 local Format = require(Shared.Util.Format)
@@ -311,11 +313,16 @@ function BuildingPanel.open(model: Model)
 			Lib.clear(options)
 			local acc = { researched = ClientState.get("researched") or {}, passes = ClientState.get("passes") or {} }
 			local items = {}
-			for _, w in Weapons.all() do
-				table.insert(items, { kind = "weapon", def = w })
+			local makes = def.factory and def.factory.makes or {}
+			if table.find(makes, "weapon") then
+				for _, w in Weapons.all() do
+					table.insert(items, { kind = "weapon", def = w })
+				end
 			end
 			for _, u in Units.all() do
-				table.insert(items, { kind = "unit", def = u })
+				if table.find(makes, u.class) then
+					table.insert(items, { kind = "unit", def = u })
+				end
 			end
 			for i, item in items do
 				local d = item.def
@@ -341,7 +348,7 @@ function BuildingPanel.open(model: Model)
 				Lib.display({ Text = string.upper(item.kind == "weapon" and (d :: any).short or d.name), TextSize = 13, TextColor3 = ok and C.Text or C.Faint, Size = UDim2.new(1, -60, 0, 16), Parent = btn })
 				Lib.display({ Text = "$" .. Format.short(d.cost), TextSize = 12, TextColor3 = ok and C.Good or C.Faint, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(58, 16), TextXAlignment = Enum.TextXAlignment.Right, Parent = btn })
 				Lib.text({
-					Text = ok and ("%d fuel · %d steel · %s"):format(d.fuel, d.steel, Format.duration(d.time)) or "LOCKED",
+					Text = ok and (d.fuel > 0 and ("%d fuel · %d steel · %s"):format(d.fuel, d.steel, Format.duration(d.time)) or ("%d steel · %s"):format(d.steel, Format.duration(d.time))) or "LOCKED",
 					TextSize = 11,
 					FontFace = Theme.Font.BodyBold,
 					TextColor3 = ok and C.Muted or C.Accent,
@@ -387,6 +394,107 @@ function BuildingPanel.open(model: Model)
 					end,
 				})
 			end
+		end
+	elseif def.farm then
+		local cropSection, cropTitle = section(scroll, "Field", 4)
+		local status = Lib.display({ Text = "", TextSize = 15, Size = UDim2.new(1, 0, 0, 18), LayoutOrder = 1, Parent = cropSection })
+		local growBar = Lib.progress({ Segments = 12, Size = UDim2.new(1, 0, 0, 8), LayoutOrder = 2, Parent = cropSection })
+		local row = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 36), LayoutOrder = 3, Parent = cropSection }, { Lib.list("x", 6) })
+		local harvestBtn = Lib.button({
+			Name = "Harvest",
+			Variant = "good",
+			Text = "HARVEST",
+			TextSize = 13,
+			Size = UDim2.fromOffset(120, 34),
+			Parent = row,
+			Activated = function()
+				local res = Net.request("FarmAction", uid, "harvest")
+				if res.ok then
+					Sounds.play("Success")
+				elseif res.err then
+					Notifications.show(res.err, "info")
+				end
+			end,
+		})
+		local autoBtn = Lib.button({
+			Name = "AutoReplant",
+			Variant = "secondary",
+			Text = "AUTO-REPLANT: OFF",
+			TextSize = 11,
+			Size = UDim2.fromOffset(150, 34),
+			Parent = row,
+			Activated = function()
+				Net.request("FarmAction", uid, "auto")
+			end,
+		})
+		Lib.button({
+			Name = "HarvestAll",
+			Variant = "secondary",
+			Text = "HARVEST ALL",
+			TextSize = 11,
+			Size = UDim2.fromOffset(110, 34),
+			Parent = row,
+			Activated = function()
+				local res = Net.request("HarvestAll")
+				if res.ok then
+					Sounds.play("Success")
+					Notifications.show(("Harvested %d fields: +%d food"):format(res.count or 0, res.food or 0), "good")
+				elseif res.err then
+					Notifications.show(res.err, "info")
+				end
+			end,
+		})
+		local plantSection = section(scroll, "Plant a crop", 5)
+		local cropGrid = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = plantSection }, { Lib.grid(UDim2.new(0.5, -4, 0, 62), 6) })
+		for i, crop in Crops.all() do
+			local btn = Lib.button({
+				Name = "Plant_" .. crop.id,
+				LayoutOrder = i,
+				BackgroundColor3 = C.Raised,
+				Parent = cropGrid,
+				Activated = function()
+					local res = Net.request("FarmAction", uid, "plant", crop.id)
+					if res.ok then
+						Sounds.play("Place")
+					elseif res.err then
+						Notifications.show(res.err, "info")
+					end
+				end,
+			}, { Lib.corner(4), Lib.stroke(C.LineSoft), Lib.pad(6, 8) })
+			New("Frame", { BackgroundColor3 = crop.ripe, Size = UDim2.fromOffset(10, 10), Position = UDim2.fromOffset(0, 3), Parent = btn }, { Lib.round() })
+			Lib.display({ Text = string.upper(crop.name), TextSize = 13, Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -70, 0, 16), Parent = btn })
+			Lib.display({ Text = "$" .. crop.seed, TextSize = 12, TextColor3 = C.Good, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(54, 16), TextXAlignment = Enum.TextXAlignment.Right, Parent = btn })
+			Lib.text({ Text = ("%d food · %s"):format(crop.yield, Format.duration(crop.time)), TextSize = 11, FontFace = Theme.Font.BodyBold, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 0, 14), Parent = btn })
+		end
+		Lib.button({
+			Name = "SellFood",
+			Variant = "gold",
+			Text = "SELL ALL FOOD",
+			TextSize = 12,
+			Size = UDim2.fromOffset(160, 32),
+			LayoutOrder = 2,
+			Parent = plantSection,
+			Activated = function()
+				local res = Net.request("SellFood")
+				if res.ok then
+					Sounds.play("Pay")
+					Notifications.show(res.text or "Food sold", "pay")
+				elseif res.err then
+					Notifications.show(res.err, "info")
+				end
+			end,
+		})
+		updateSpecial = function()
+			local crop = Crops.get(model:GetAttribute("Crop") :: string?)
+			local growth = ((model:GetAttribute("Growth") :: number?) or 0) / 100
+			local ripe = crop ~= nil and growth >= 1
+			cropTitle.Text = crop and ("FIELD · %s"):format(string.upper(crop.name)) or "FIELD · EMPTY"
+			status.Text = crop and (ripe and "RIPE - READY TO HARVEST" or ("%s · %d%%"):format(string.upper(Crops.StageNames[Crops.stage(growth)]), math.floor(growth * 100))) or "PICK A CROP BELOW"
+			status.TextColor3 = ripe and C.Good or (crop and C.Text or C.Muted)
+			growBar.set(growth, ripe and C.Good or C.Gold)
+			harvestBtn.Visible = ripe
+			autoBtn.Text = model:GetAttribute("AutoReplant") and "AUTO-REPLANT: ON" or "AUTO-REPLANT: OFF"
+			plantSection.Visible = crop == nil
 		end
 	elseif def.launcher then
 		local special = section(scroll, "Strike", 4)
@@ -461,7 +569,11 @@ function BuildingPanel.open(model: Model)
 				setStat(stats[4], "Oil arriving", ("+%s/min"):format(Format.short((model:GetAttribute("OilArriving") :: number?) or 0)), "from your oil pumps", nil)
 			elseif def.factory then
 				local fuel = (model:GetAttribute("Fuel") :: number?) or 0
-				setStat(stats[1], "Fuel stored", ("%s/%s"):format(Format.short(fuel), Format.short(def.fuelCap or 0)), "delivered by trucks", fuel / (def.fuelCap or 1))
+				if def.fuelCap then
+					setStat(stats[1], "Fuel stored", ("%s/%s"):format(Format.short(fuel), Format.short(def.fuelCap)), "delivered by trucks", fuel / def.fuelCap)
+				else
+					setStat(stats[1], "Army", ("%d/%d"):format(d.units or 0, d.unitCap or 0), "units in service", (d.unitCap or 0) > 0 and (d.units or 0) / d.unitCap or 0, C.Info)
+				end
 				setStat(stats[2], "Steel", Format.short(d.steel or 0), ("+%s/min nationally"):format(Format.short(d.steelRate or 0)), (d.steelCap or 0) > 0 and (d.steel or 0) / d.steelCap or 0, C.TextSoft)
 				setStat(stats[3], "Build speed", ("x%s"):format(tostring(def.factory.speed * ((d.passes or {}).FastBuild and 2 or 1))), "Fast Construction doubles it", nil)
 				setStat(stats[4], "Efficiency", Format.percent(eff * 100), "workers, power, road", eff, C.Teal)
@@ -474,6 +586,13 @@ function BuildingPanel.open(model: Model)
 				setStat(stats[2], "Launchers ready", l and ("%d/%d"):format(l.ready, l.total) or "0", "of this type", l and l.total > 0 and l.ready / l.total or 0, C.Good)
 				setStat(stats[3], "Reload", reloadUntil > now and Format.duration(reloadUntil - now) or "READY", ("%ds per launch"):format(def.reload or 20), nil)
 				setStat(stats[4], "Hits landed", Format.commas(((d.stats or {}).Hits) or 0), "unlocks better missiles", nil)
+			elseif def.farm then
+				local crop = Crops.get(model:GetAttribute("Crop") :: string?)
+				local growth = ((model:GetAttribute("Growth") :: number?) or 0) / 100
+				setStat(stats[1], "Growth", crop and Format.percent(growth * 100) or "-", crop and crop.name or "nothing planted", growth, C.Good)
+				setStat(stats[2], "Food stored", ("%s/%s"):format(Format.short(d.food or 0), Format.short(d.foodCap or 0)), d.fed and "citizens well fed" or ("citizens eat %s/pay"):format(Format.short(d.foodUse or 0)), (d.foodCap or 0) > 0 and (d.food or 0) / d.foodCap or 0, C.Gold)
+				setStat(stats[3], "Harvest", crop and ("%d food"):format(crop.yield) or "-", "overflow sells for cash", nil)
+				setStat(stats[4], "Efficiency", Format.percent(eff * 100), "farmhands + barns nearby", eff, C.Teal)
 			elseif def.airDefense then
 				local ad = def.airDefense
 				setStat(stats[1], "Range", ("%d"):format(ad.range), "studs · +25% with radar", nil)
@@ -502,7 +621,7 @@ function BuildingPanel.open(model: Model)
 				elseif def.service then
 					outText, outSub = Format.short(def.service.serves * eff), string.lower(def.service.kind) .. " coverage"
 				elseif def.storage then
-					outText, outSub = "+" .. Format.short((def.storage.oil or 0) + (def.storage.steel or 0)), "extra storage"
+					outText, outSub = "+" .. Format.short((def.storage.oil or 0) + (def.storage.steel or 0) + (def.storage.food or 0)), def.storage.food and "food storage" or "extra storage"
 				elseif def.depot then
 					outText, outSub = "+" .. def.depot, "army capacity"
 				elseif def.radar then

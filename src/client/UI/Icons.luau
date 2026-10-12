@@ -295,6 +295,39 @@ function Icons.undo(size: number, color: Color3): Frame
 	return f
 end
 
+function Icons.heli(size: number, color: Color3): Frame
+	local f = box(size)
+	rect(f, 0.5, 0.18, 0.92, 0.07, color, 0, 0.5) -- rotor
+	rect(f, 0.5, 0.27, 0.07, 0.14, color)
+	rect(f, 0.42, 0.52, 0.5, 0.3, color, 0, 0.45) -- cabin
+	rect(f, 0.78, 0.46, 0.38, 0.08, color, 0, 0.5) -- tail boom
+	rect(f, 0.94, 0.38, 0.06, 0.2, color)
+	rect(f, 0.42, 0.8, 0.56, 0.05, color) -- skid
+	return f
+end
+
+function Icons.soldier(size: number, color: Color3): Frame
+	local f = box(size)
+	rect(f, 0.5, 0.2, 0.38, 0.22, color, 0, 1) -- helmet
+	rect(f, 0.5, 0.29, 0.26, 0.12, color, 0, 0.4)
+	rect(f, 0.5, 0.56, 0.42, 0.38, color, 0, 0.15) -- torso
+	rect(f, 0.38, 0.86, 0.14, 0.26, color, 0, 0.2)
+	rect(f, 0.62, 0.86, 0.14, 0.26, color, 0, 0.2)
+	rect(f, 0.62, 0.5, 0.62, 0.07, color, -12, 0.5) -- rifle
+	return f
+end
+
+function Icons.wheat(size: number, color: Color3): Frame
+	local f = box(size)
+	rect(f, 0.5, 0.62, 0.06, 0.66, color)
+	for i = 0, 3 do
+		local y = 0.2 + i * 0.13
+		rect(f, 0.38, y, 0.16, 0.1, color, 30, 1)
+		rect(f, 0.62, y, 0.16, 0.1, color, -30, 1)
+	end
+	return f
+end
+
 function Icons.get(name: string, size: number, color: Color3?): Frame
 	local fn = (Icons :: any)[name]
 	if type(fn) ~= "function" then

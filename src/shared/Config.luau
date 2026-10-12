@@ -104,6 +104,33 @@ Config.Codes = {
 }
 
 ---------------------------------------------------------------------------
+-- Farming + food
+---------------------------------------------------------------------------
+Config.FoodBaseCap = 1000 -- national food storage before barns / silos
+Config.FoodPerCitizen = 0.02 -- food eaten per citizen every pay day
+Config.WellFedHappiness = 12 -- happiness bonus while food covers the population
+Config.FoodPrice = 4 -- $ per food sold (overflow from full storage sells automatically)
+Config.FarmBoostRange = 70 -- studs: farmhouses / barns speed up fields this close
+
+---------------------------------------------------------------------------
+-- Field logistics: transports, helicopters, supplies and FOBs
+---------------------------------------------------------------------------
+Config.HeliAltitude = 60 -- cruise height of helicopters (studs)
+Config.BoardRange = 70 -- squads this close to a transport can climb aboard
+Config.SupplyCost = { food = 1, steel = 1 } -- per supply point loaded at home
+Config.FobCost = 20000
+Config.FobSteel = 300
+Config.FobMax = 1 -- per nation (VIP: +1)
+Config.FobHp = 1500
+Config.FobSupplyCap = 800
+Config.FobRadius = 110 -- friendly units this close are healed from supplies
+Config.FobHealRate = 12 -- hp per second per unit while supplies last
+Config.FobHealPerSupply = 20 -- hp restored per supply point
+Config.FobGunRange = 80
+Config.FobGunDps = 10
+Config.FobSpacing = 180 -- min distance from strategic points and other FOBs
+
+---------------------------------------------------------------------------
 -- Nation identity, ranks and world
 ---------------------------------------------------------------------------
 Config.NationNameMin = 3

@@ -1,6 +1,8 @@
 --[[
 	ProductionService
-	Military factories build missiles, drones and vehicles from a queue.
+	Production buildings work through a queue: military factories build
+	missiles, drones and vehicles, barracks train infantry squads and
+	helipads build helicopters (factory.makes in the building catalog).
 	Cash is paid when queued, steel when an item starts, and fuel is burned
 	while it is being built (delivered by refinery trucks).
 ]]
@@ -35,6 +37,22 @@ local function catalogFor(kind: string, id: string): any
 	end
 	return Weapons.get(id)
 end
+
+-- Hint for where a category is built.
+function ProductionService.whereMade(category: string): string
+	if category == "infantry" then
+		return "train squads at a Barracks"
+	elseif category == "air" then
+		return "build helicopters at a Helipad"
+	end
+	return "use a Military Factory"
+end
+
+local ROLL_OUT = {
+	vehicle = "%s rolled out of the factory",
+	infantry = "%s marched out of the barracks",
+	air = "%s lifted off the helipad",
+}
 
 function ProductionService.queueLimit(n: Nation): number
 	return Config.MaxQueuePerFactory + (n.passes.ExtraQueue and 3 or 0)
@@ -91,7 +109,7 @@ function ProductionService.tick(n: Nation, dt: number, _now: number)
 								if S.UnitService.canAdd(n) then
 									S.UnitService.spawn(n, item.id, nil, b)
 									table.remove(b.queue, 1)
-									Nations.notify(n.player, cat.name .. " rolled out of the factory", "good")
+									Nations.notify(n.player, (ROLL_OUT[cat.class] or ROLL_OUT.vehicle):format(cat.name), "good")
 								else
 									status = "Army Full - Build Vehicle Depots"
 								end
@@ -129,6 +147,10 @@ local function onQueue(player: Player, factoryUid: any, kind: any, id: any)
 	local cat = catalogFor(kind, id)
 	if not cat then
 		return { ok = false, err = "Unknown item" }
+	end
+	local category = kind == "weapon" and "weapon" or cat.class
+	if not table.find(b.def.factory.makes, category) then
+		return { ok = false, err = ("%s can't build that - %s"):format(b.def.name, ProductionService.whereMade(category)) }
 	end
 	local ok, reason = Unlocks.check(cat, S.BuildService.access(n))
 	if not ok then

@@ -31,6 +31,10 @@ export type BRuntime = {
 	queue: { { id: string, kind: string, progress: number, started: boolean } },
 	reloadUntil: number,
 	connected: boolean,
+	crop: string?, -- farm fields
+	growth: number?,
+	auto: boolean?,
+	lastCrop: string?,
 	eff: number,
 	status: string,
 }
@@ -55,6 +59,7 @@ export type Nation = {
 	shieldUntil: number,
 	undo: { { [string]: any } },
 	units: { [number]: any },
+	fobs: { any },
 	nextUnitUid: number,
 	sent: { [string]: string },
 	ready: boolean,

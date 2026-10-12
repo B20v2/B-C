@@ -8,7 +8,9 @@ A Roblox nation-builder / war game inspired by *Build and Conquer*, with its own
 
 - **Field Command UI:** a dark tactical-glass interface with amber signal accents, a stencil display font, corner brackets and hazard stripes. It is drawn entirely in code (no image IDs), with a command dock, a radar minimap and a war-room theater view.
 - **Blender model kit:** 89 hand-built stylized low-poly models (55 buildings, 11 vehicles, 7 munitions, 6 battlefield sites, a fuel truck and props) with baked palette UVs. They are exported as FBX for Studio's 3D Importer, and the game picks them up automatically.
-- **Always playable:** until the kit is imported, every model falls back to a clean procedural part-built version, so the place works the moment you open it.
+- **Always playable:** until the kit is imported, every model falls back to a clean procedural part-built version, so the place works the moment you open it. The procedural set includes remodelled houses, apartments, offices and shops, farms, classic Roblox-character infantry, Humvees, helicopters and FOBs (see below).
+
+![New models](docs/new_models.png)
 
 ## Quick start
 
@@ -53,11 +55,14 @@ rojo build -o build/ForgeAndFrontline.rbxlx   # or rebuild the place file
 | **Utilities** | Workers, power (MW) and water are pooled per nation. Shortages slow every building that needs them. Buildings without road access run at half speed. |
 | **Happiness** | Leisure, commerce, education and health coverage raise it. Pollution, shortages and damaged buildings lower it. It drives tax income and population growth. |
 | **Oil → fuel → war** | Oil pumps fill national storage. Refineries refine fuel, and **fuel trucks visibly drive** it to military factories. The destination is either Auto (most free space) or one you pick, as in the refinery panel. |
-| **Production** | Military factories build missiles, drones and vehicles from a queue. Each item costs cash up front, steel when it starts, and burns fuel while it builds. |
+| **Production** | Each production building works through a queue: Military Factories build missiles, drones and vehicles, the **Barracks** trains infantry squads, and the **Helipad** builds helicopters. Each item costs cash up front, steel when it starts, and burns fuel while it builds (infantry needs no fuel). |
+| **Farms** (Farms tab) | Place Farm Fields anywhere and plant wheat, potatoes, corn or sunflowers. Each crop has its own seed cost, growth time and yield. Fields grow through four visible stages (ploughed, sprouts, growing, ripe), faster with farmhands and with a Farmhouse or Barn nearby. Walk up and press `E` to harvest or replant, or use the field's panel (plant, harvest, harvest all, auto-replant, sell food). Food is stored in barns and silos, and citizens eat it every pay day, which gives a happiness bonus while they're fed. Overflow sells for cash, and food is packed into FOB supplies. |
 | **Research** | Labs generate RP. The Civil and Military trees unlock buildings and weapons. The missile ladder (SRBM → GLCM → MRBM → Cluster → Hypersonic) also needs confirmed **hits**. |
 | **War map** (`M`) | The theater select lists the central front (points held, vehicles deployed) and every rival nation with its flag, rank, power and PvP state. The strategic camera adds a vignette, a theater readout (grid and altitude), a weapon hotbar (stock, reload and ammo bars), and a reticle that names what's under it before you launch. |
 | **Air defense** | CIWS, SAM and long-range SAM intercept incoming strikes in range (radar adds 25%). Interceptors visibly meet missiles mid-air. |
-| **Units** | Marder, Leopard, HIMARS, Gepard and more, plus faction variants. Vehicles really drive: out of your city, across your bridge, over the battlefield and, with PvP on, across a rival's bridge into their city. Drag-box select, then right-click anywhere to drive there. DEPLOY ALL rolls everything out to your staging pad. They fight any enemy vehicle in the same theatre and wear down garrisons. |
+| **Units** | Three classes. **Infantry** are squads of classic Roblox (R6) soldiers with distinct kit: Rifle Squad (plate carriers, NVG helmets), Anti-Tank Team (rocket launchers), Recon Team (boonie hats and ghillie wraps), VDV (Eastern digital camo, heavy helmets) and Legion (European desert kit); their legs swing as they march. **Vehicles** are Humvee, Logistics Truck, Marder, Leopard, HIMARS, Gepard and faction variants. **Helicopters** are the Black Hawk (door guns) and Chinook (twin rotors), with spinning rotors. Ground units really drive and march: out of your city, across your bridge, over the battlefield and, with PvP on, across a rival's bridge into their city. Helicopters fly straight there at altitude and land. Drag-box select, then right-click to move. Damage depends on what hits what: anti-tank wrecks armour, riflemen shred infantry, and only anti-air and door guns can hit helicopters (a city's air defenses shoot intruding helicopters too). |
+| **Transports** | Humvees, IFVs, Logistics Trucks, Black Hawks and Chinooks carry squads. MOUNT UP puts selected squads into the nearest transport with room (they walk over if needed), and DISMOUNT lets everyone out. Trucks (150) and helicopters (Black Hawk 60, Chinook 300) carry supplies, packed at home from food + steel. A Chinook also sling-loads a light vehicle (Humvee, truck, IFV, mobile AA) under its belly. |
+| **FOBs** | Drive a Logistics Truck or fly a Chinook onto the battlefield and choose SET UP FOB ($20k + 300 steel). You get one FOB, or two with VIP, placed away from strategic points and other FOBs. It comes with HESCO walls, tents, a helipad, a watchtower and a supply dump. Supplies heal your units around it and its perimeter gun shoots enemy ground units. Enemies can shoot it down with units or missiles for a $15k bounty. **AIRLIFT TO FOB** loads a helicopter at home with waiting squads, supplies and (Chinook) a vehicle, flies to the FOB and unloads. **AIRLIFT HOME** brings squads back. These orders sit in the war map's Field Orders panel and the Army screen. |
 | **Invasions** | With both nations' PvP on (and no new-nation shield), send vehicles into a rival city. They shoot its defenders and knock out buildings for war spoils. The defender's own vehicles fight back, and the defender is warned that their city is under attack. Ordering an invasion locks your PvP ON like a strike does. |
 | **Conquest** | Seven strategic points: Capital, Airport, Oil Field, Nuclear Plant, City, Port, Military Base. Knock the garrison to 0, hold the ring, and capture it for cash, oil, power, steel or RP bonuses. |
 | **PvP** | Opt-in toggle, with a 20-minute shield for new nations. Attacking locks you PvP ON for 3 minutes. Hits knock buildings out (they are repaired, never deleted) and pay you war spoils. |
@@ -94,6 +99,7 @@ src/shared/            ReplicatedStorage.Shared
   AssetLibrary.luau    loads + normalises the imported Blender kit (ReplicatedStorage.Assets)
   ModelBuilder.luau    kit-first models with procedural low-poly fallbacks, road segments
   Net.luau             declared remotes + rate-limited server handlers
+  Catalog/Crops.luau   crops: seed, growth time, yield, colours
   Util/                Grid (world layout: ring of islands, bridges, zones), Footprint
                        (rotated-rectangle overlap + spatial hash), Format, Ballistics,
                        Unlocks, Flag, Rank
@@ -102,6 +108,7 @@ src/server/            ServerScriptService.Server
   Services/            Data (session-locked DataStore), Plot, Build, Economy, Logistics,
                        Production, Research, Unit, Conquest, Combat, Monetization,
                        Reward, Nation (identity + ranks), World (day/night),
+                       Fob (FOBs, supplies, airlift, field orders), Farm (crops, food),
                        State (diffed state sync), Nations (runtime registry)
 src/client/            StarterPlayerScripts.Client
   Main.client.luau     UI layers auto-scaled from a 1600x900 design (phone to 4K)
@@ -114,9 +121,21 @@ blender/               the model kit source (Python + bpy)
   build_kit.py         builds every model, exports FBX, renders previews
   ffkit/               palette, geometry helpers, civil / military / world styles
 assets/                generated kit: FF_*.fbx, ForgeKit.blend, palette.png, previews/
-tools/                 export_manifest.luau (catalog -> blender/manifest.json)
+tools/                 export_manifest.luau (catalog -> blender/manifest.json),
+                       export_parts.luau (procedural models -> JSON for previews)
 tests/                 Lune test suites (see below)
 ```
+
+### Previewing the procedural models
+
+Render what players see before the kit is imported, using the same Blender install as the kit:
+```bash
+lune run tools/export_parts.luau build/ForgeAndFrontline.rbxlx parts.json
+python blender/render_parts.py parts.json previews/ --only small_house,unit_chinook,fob
+```
+This writes one image per model plus `_sheet_<group>.png` contact sheets. `docs/new_models.png` was made this way.
+
+> **Note:** when the Blender kit is imported, its models replace the procedural ones for the same buildings and vehicles (houses, apartments and so on). The new farm buildings, barracks, helipad, FOB, infantry, Humvee and helicopters have no kit version yet, so they always use the procedural models above.
 
 ### Rebuilding the model kit
 
@@ -136,8 +155,8 @@ All gameplay is **server-authoritative**. The client only sends requests, and ev
 ./tests/run.sh
 ```
 Builds the place, then runs three Lune suites:
-- **shared_smoke:** catalog cross-references, the world layout (islands face the centre, nothing overlaps, zones and bridges), footprint geometry, formatting, every procedural model and road segment, flags and ranks, and the Blender-kit loader (fake imported meshes get indexed, fitted to the footprint, turned to face forward, rigged and lit).
-- **server_sim:** the real server with mocked Roblox services. Two players join, draw roads, build at any angle, grow, research, refine, produce, strike and fight PvP. Their vehicles route over the bridges, capture a point and invade a city. They also buy, claim rewards, found nations (name validation, flag sanitising, sign + flagpole) and rank up. They leave and rejoin with everything restored, and an old grid-format save is migrated.
-- **client_sim:** the real client UI driven against that simulated server. It founds a nation through the flag designer, checks the placement tools (overlap, road alignment, drawing a diagonal road, grid snap, rows), opens every window, panel, tab, tool and the war view, launches a missile, and runs a night/day light cycle.
+- **shared_smoke:** catalog cross-references, soldier rigs (jointed legs, classic heads), helicopter rotors, the FOB model, crop stages, the world layout (islands face the centre, nothing overlaps, zones and bridges), footprint geometry, formatting, every procedural model and road segment, flags and ranks, and the Blender-kit loader (fake imported meshes get indexed, fitted to the footprint, turned to face forward, rigged and lit).
+- **server_sim:** the real server with mocked Roblox services. Two players join, draw roads, build at any angle, grow, research, refine, produce, strike and fight PvP. Their vehicles route over the bridges, capture a point and invade a city. Squads board and leave a Humvee, a truck packs supplies and sets up a FOB, the FOB heals, and a Chinook airlifts squads, supplies and a slung Humvee to it. Only anti-air hits helicopters, and the FOB can be destroyed. Fields are planted, grown, harvested (including harvest-all and auto-replant), food is eaten and sold, and field state is saved. They also buy, claim rewards, found nations (name validation, flag sanitising, sign + flagpole) and rank up. They leave and rejoin with everything restored, and an old grid-format save is migrated.
+- **client_sim:** the real client UI driven against that simulated server. It founds a nation through the flag designer, plants a crop from the field panel, mounts and dismounts a squad through the Field Orders panel, animates soldier legs and rotors, checks the Army screen groups, checks the placement tools (overlap, road alignment, drawing a diagonal road, grid snap, rows), opens every window, panel, tab, tool and the war view, launches a missile, and runs a night/day light cycle.
 
 `luau-lsp analyze` (Roblox definitions) also runs clean over `src/`.

@@ -161,6 +161,10 @@ function RewardService.questProgress(n: Nation): (any?, number, number)
 		cur = data.Stats.Captures
 	elseif q.kind == "units" then
 		cur = S.UnitService.count(n)
+	elseif q.kind == "harvests" then
+		cur = data.Stats.Harvests or 0
+	elseif q.kind == "fob" then
+		cur = #n.fobs
 	end
 	return q, math.min(cur, q.count), q.count
 end

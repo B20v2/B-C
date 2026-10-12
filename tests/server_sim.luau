@@ -456,6 +456,147 @@ if u then
 	check(#u.path >= 3, "recall drives home over the bridges")
 end
 
+print("== infantry, transports, FOB, airlift")
+for _, id in { "aviation", "mechanized", "military_doctrine" } do nA.data.Researched[id] = true end
+nA.data.Cash = 50000000
+local bar = place_(A, "barracks", 160, -60)
+local pad = place_(A, "helipad", 160, -140)
+check(bar.ok and pad.ok, "barracks + helipad placed")
+S.BuildService.finishAll(nA)
+check(call("QueueProduction", A, bar.uid, "unit", "rifle_squad").ok, "barracks trains a rifle squad")
+local wrongQ = call("QueueProduction", A, bar.uid, "weapon", "SRBM")
+check(not wrongQ.ok and (wrongQ.err or ""):find("Military Factory") ~= nil, "barracks can't build missiles")
+check(not call("QueueProduction", A, fac.uid, "unit", "rifle_squad").ok, "factories don't train infantry")
+check(not call("QueueProduction", A, fac.uid, "unit", "chinook").ok, "factories don't build helicopters")
+local US = S.UnitService
+local sq1 = US.spawn(nA, "rifle_squad")
+local sq2 = US.spawn(nA, "at_team")
+local hum = US.spawn(nA, "humvee")
+local truck = US.spawn(nA, "truck")
+local chin = US.spawn(nA, "chinook")
+local hawk = US.spawn(nA, "blackhawk")
+check(sq1 and sq2 and hum and truck and chin and hawk, "infantry, humvee, truck and helicopters spawn")
+check(sq1.model:FindFirstChild("Soldier") ~= nil and sq1.model:FindFirstChild("LeftHip", true) ~= nil, "squads are jointed Roblox soldiers")
+check(chin.model:FindFirstChild("FrontRotorJoint", true) ~= nil, "chinook rotors are jointed")
+local padPos = S.BuildService.worldCFrame(nA, nA.buildings[pad.uid]).Position
+check((Vector3.new(chin.root.CFrame.Position.X, 0, chin.root.CFrame.Position.Z) - Vector3.new(padPos.X, 0, padPos.Z)).Magnitude < 40, "helicopters park at the helipad")
+-- mount / dismount
+local mres = call("UnitOrder", A, "mount", { sq1.uid, sq2.uid, hum.uid })
+check(mres.ok and #hum.cargo == 1, ("squad boards the humvee (%s)"):format(tostring(mres.err)))
+local boarded = sq1.carried == hum and sq1 or sq2
+check(boarded.model.Parent == nil and hum.model:GetAttribute("Cargo") == 1, "passengers hide inside + cargo tag")
+check(US.damage(boarded, 999) == false, "passengers can't be shot")
+check(call("UnitOrder", A, "dismount", { hum.uid }).ok and #hum.cargo == 0 and boarded.carried == nil and boarded.model.Parent ~= nil, "dismount")
+-- supplies + FOB
+nA.data.Food = 400
+nA.data.Steel = 5000
+local food0 = nA.data.Food
+local lres = call("UnitOrder", A, "loadSupplies", { truck.uid })
+check(lres.ok and truck.supplies == 150 and nA.data.Food == food0 - 150, ("truck packs 150 supplies (%s)"):format(tostring(lres.err)))
+check(not call("UnitOrder", A, "fob", { truck.uid }).ok, "no FOB at home")
+local fobSpot = Grid.landing(nA.plotIndex)
+truck.model:PivotTo(CFrame.new(fobSpot + Vector3.new(0, truck.height, 0)))
+truck.align.Position = fobSpot + Vector3.new(0, truck.height, 0)
+US._moveStep()
+local cash1 = nA.data.Cash
+local fres = call("UnitOrder", A, "fob", { truck.uid })
+check(fres.ok and #nA.fobs == 1, "FOB set up on the battlefield " .. tostring(fres.err))
+local fob = nA.fobs[1]
+check(fob and fob.supplies == 150 and truck.supplies == 0 and nA.data.Cash == cash1 - Config.FobCost, "FOB takes the truck's supplies and costs cash")
+check(fob.model.Parent ~= nil and fob.model:GetAttribute("Supplies") == 150, "FOB model on the map")
+check(not call("UnitOrder", A, "fob", { truck.uid }).ok, "FOB limit")
+check(invokers.GetSnapshot(A).fobs[1].supplies == 150, "FOB in snapshot")
+-- FOB heals
+sq2.hp = 30
+sq2.model:PivotTo(CFrame.new(fob.pos + Vector3.new(10, sq2.height, 0)))
+local sup0 = fob.supplies
+S.FobService._tick(2)
+check(sq2.hp > 30 and fob.supplies < sup0, ("FOB heals from supplies (hp %.0f, supplies %.1f)"):format(sq2.hp, fob.supplies))
+sq2.model:PivotTo(CFrame.new(Grid.yard(nA.plotIndex) + Vector3.new(0, sq2.height, 0)))
+US._moveStep()
+-- airlift: chinook loads squads at home, supplies and the humvee, flies to the FOB, unloads
+nA.data.Food = 1000
+local supBefore = fob.supplies
+US._moveStep()
+local ares = call("UnitOrder", A, "airlift", { chin.uid }, "fob")
+check(ares.ok, "airlift order " .. tostring(ares.err))
+check(#chin.cargo >= 1 and chin.supplies > 0 and chin.slung == hum, ("chinook loaded (%d squads, %d supplies, slung %s)"):format(#chin.cargo, chin.supplies, tostring(chin.slung and chin.slung.def.name)))
+check(chin.align.Position.Y == Config.HeliAltitude, "chinook takes off to cruise height")
+chin.model:PivotTo(CFrame.new(fob.pos + Vector3.new(0, chin.height, 0)))
+for _ = 1, 3 do US._moveStep() end
+check(#chin.cargo == 0 and chin.slung == nil and hum.carried == nil, "chinook lands and unloads at the FOB")
+check(fob.supplies > supBefore, ("supplies delivered by air (%d -> %d)"):format(supBefore, fob.supplies))
+check(hum.location == "mainland", "slung humvee set down on the battlefield")
+-- helicopters: only anti-air can hit them; city air defense shoots intruders
+local enemyTank = US.spawn(nB, "leopard")
+hawk.model:PivotTo(CFrame.new(fob.pos + Vector3.new(30, Config.HeliAltitude, 0)))
+enemyTank.model:PivotTo(CFrame.new(fob.pos + Vector3.new(60, enemyTank.height, 0)))
+US._moveStep()
+local hawkHp = hawk.hp
+US._combatStep()
+check(hawk.hp == hawkHp, "tanks can't shoot helicopters")
+local gep = US.spawn(nB, "gepard")
+gep.model:PivotTo(CFrame.new(fob.pos + Vector3.new(50, gep.height, 0)))
+US._moveStep()
+US._combatStep()
+check(hawk.hp < hawkHp, "anti-air hits helicopters")
+check(US.versus(sq1, enemyTank) < 0.5 and US.versus(sq2, enemyTank) > 2, "anti-tank teams wreck armour, riflemen don't")
+US.remove(enemyTank)
+US.remove(gep)
+-- save + destroy
+S.FobService.serialize(nA)
+check(#nA.data.Fobs == 1 and nA.data.Fobs[1].s ~= nil, "FOB saved")
+local bCash = nB.data.Cash
+S.FobService.damage(fob, 1e6, nB)
+check(#nA.fobs == 0 and nB.data.Cash == bCash + 15000, "FOB destroyed pays the attacker")
+
+print("== farming")
+local field = place_(A, "farm_field", -40, 200)
+local barn = place_(A, "barn", -2, 200)
+check(field.ok and barn.ok, "field + barn placed")
+S.BuildService.finishAll(nA)
+local fb = nA.buildings[field.uid]
+check(fb.model:FindFirstChild("FarmPrompt", true) ~= nil, "field has a walk-up prompt")
+local cashF = nA.data.Cash
+check(call("FarmAction", A, field.uid, "plant", "wheat").ok and fb.crop == "wheat" and nA.data.Cash == cashF - 120, "plant wheat")
+check(not call("FarmAction", A, field.uid, "plant", "corn").ok, "can't plant over a crop")
+check(not call("FarmAction", A, field.uid, "harvest").ok, "can't harvest unripe")
+advance(30)
+check(fb.growth > 0.2 and fb.model:GetAttribute("Stage") >= 1, ("crop grows (%.0f%%)"):format(fb.growth * 100))
+local crops = fb.model:FindFirstChild("Crops")
+check(crops ~= nil and #crops:GetChildren() > 0, "crop rows appear")
+for _ = 1, 40 do
+	if fb.growth >= 1 then break end
+	advance(10)
+end
+check(fb.growth >= 1 and fb.model:GetAttribute("Stage") == 3, ("crop ripens (%.0f%%)"):format(fb.growth * 100))
+nA.data.Food = 0
+local hres = call("HarvestAll", A)
+check(hres.ok and hres.food == 90 and nA.data.Food == 90 and nA.data.Stats.Harvests == 1, "harvest all fields -> food")
+check(fb.crop == nil, "field empties after harvest")
+call("FarmAction", A, field.uid, "auto")
+call("FarmAction", A, field.uid, "plant", "potatoes")
+for _ = 1, 60 do
+	if fb.growth >= 1 then break end
+	advance(10)
+end
+call("FarmAction", A, field.uid, "harvest")
+check(fb.crop == "potatoes" and fb.auto == true, "auto-replant")
+nA.data.Food = nA.stats.foodCap
+local cashO = nA.data.Cash
+S.FarmService.addFood(nA, 100)
+check(nA.data.Cash == cashO + 100 * Config.FoodPrice, "overflow food is sold")
+nA.data.Food = 1000
+local eat = nA.data.Population * Config.FoodPerCitizen
+S.FarmService.payDay(nA)
+check(math.abs(nA.data.Food - (1000 - eat)) < 0.01 and nA.stats.fed == true, ("citizens eat (%.1f food)"):format(eat))
+local sres = call("SellFood", A)
+check(sres.ok and nA.data.Food == 0, "sell food")
+S.BuildService.serialize(nA)
+local savedField
+for _, e in nA.data.Buildings do if e.u == field.uid then savedField = e end end
+check(savedField and savedField.cr == "potatoes" and savedField.ar == true, "field state saved")
+
 print("== monetization + rewards")
 check(call("StudioPurchase", A, "pass", "DoubleCash").ok, "studio pass purchase")
 check(nA.passes.DoubleCash == true, "2x cash owned")

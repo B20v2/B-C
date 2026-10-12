@@ -295,6 +295,42 @@ for _, p in WarMap do
 	check(ok, "war point " .. p.model .. ": " .. tostring(m))
 end
 
+-- Infantry rigs, helicopter rotors, FOB, crops
+for _, u in Units.all() do
+	local m = ModelBuilder.unit(u)
+	local joints = 0
+	for _, d in m:GetDescendants() do
+		if d:IsA("Motor6D") then joints += 1 end
+	end
+	if u.class == "infantry" then
+		check(joints == (u.params.count or 4) * 2, ("%s: %d legs jointed, got %d"):format(u.id, (u.params.count or 4) * 2, joints))
+		local heads = 0
+		for _, d in m:GetDescendants() do
+			if d.Name == "Head" and d:FindFirstChildOfClass("SpecialMesh") then heads += 1 end
+		end
+		check(heads == (u.params.count or 4), "classic Roblox heads " .. u.id)
+	elseif u.class == "air" then
+		check(joints >= 2, "rotors jointed " .. u.id)
+		check(u.cargo ~= nil, "helicopters carry cargo " .. u.id)
+	end
+	check(u.vs.infantry ~= nil and u.vs.vehicle ~= nil and u.vs.air ~= nil, "vs table " .. u.id)
+end
+local okFob, fobModel = pcall(ModelBuilder.fob, roblox.Color3.new(1, 0, 0))
+check(okFob and fobModel.PrimaryPart ~= nil and partCount(fobModel) > 40, "FOB model")
+local Crops = mod("Catalog.Crops")
+check(Crops.stage(0) == 0 and Crops.stage(0.3) == 1 and Crops.stage(0.7) == 2 and Crops.stage(1) == 3, "crop stages")
+local fieldDef = Buildings.get("farm_field")
+for _, crop in Crops.all() do
+	for stage = 0, 3 do
+		local field = ModelBuilder.building(fieldDef)
+		local ok, crops = pcall(ModelBuilder.crops, field, crop, stage)
+		check(ok and crops.Parent == field and (stage == 0) == (#crops:GetChildren() == 0), ("crops %s stage %d"):format(crop.id, stage))
+	end
+end
+for i, q in Quests do
+	check(table.find({ "build", "population", "research", "stock", "launch", "hits", "capture", "units", "harvests", "fob" }, q.kind) ~= nil, "quest kind " .. i)
+end
+
 -- Rank ladder + flags
 local Rank = mod("Util.Rank")
 local Flag = mod("Util.Flag")

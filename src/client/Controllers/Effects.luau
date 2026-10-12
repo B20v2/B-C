@@ -318,6 +318,37 @@ local function buildDone(pos: Vector3)
 	Sounds.play("Place", 1.3)
 end
 
+-- Harvest: golden burst + floating "+90 FOOD" over the field.
+local function harvest(pos: Vector3, food: number, cash: number?)
+	buildDone(pos)
+	local holder = Instance.new("Part")
+	holder.Anchored = true
+	holder.CanCollide = false
+	holder.CanQuery = false
+	holder.Transparency = 1
+	holder.Size = Vector3.one
+	holder.Position = pos + Vector3.new(0, 6, 0)
+	holder.Parent = fx
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.fromOffset(220, 40)
+	bb.AlwaysOnTop = true
+	bb.LightInfluence = 0
+	bb.Parent = holder
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.TextScaled = true
+	label.FontFace = Font.new("rbxasset://fonts/families/Sarpanch.json", Enum.FontWeight.Bold)
+	label.TextColor3 = Color3.fromRGB(250, 214, 110)
+	label.TextStrokeTransparency = 0.4
+	label.Text = ("+%d FOOD%s"):format(food, (cash or 0) > 0 and ("  +$%d"):format(cash :: number) or "")
+	label.Parent = bb
+	Lib.tween(holder, 1.6, { Position = pos + Vector3.new(0, 16, 0) })
+	Lib.tween(label, 1.6, { TextTransparency = 1, TextStrokeTransparency = 1 })
+	Debris:AddItem(holder, 1.8)
+	Sounds.play("Success", 1.2)
+end
+
 function Effects.init()
 	fx = Instance.new("Folder")
 	fx.Name = "FX"
@@ -331,6 +362,8 @@ function Effects.init()
 			tracer(a, b, c == true)
 		elseif kind == "BuildDone" then
 			buildDone(a)
+		elseif kind == "Harvest" then
+			harvest(a, b or 0, c)
 		elseif kind == "Welcome" then
 			Hub.call("showWelcome", b, c)
 		elseif kind == "ResearchDone" then

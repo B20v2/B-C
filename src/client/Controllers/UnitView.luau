@@ -1,8 +1,8 @@
 --[[
 	UnitView
-	Nameplates over every vehicle (navy tag with a role icon and the unit
-	name), health bars when damaged, and green selection boxes for the
-	units you have selected.
+	Nameplates over every unit (navy tag with a role icon, the unit name and
+	what it carries: squads, supplies, a slung vehicle), health bars when
+	damaged, and green selection boxes for the units you have selected.
 ]]
 
 local Players = game:GetService("Players")
@@ -25,16 +25,22 @@ local listeners: { () -> () } = {}
 
 local NAVY = Color3.fromRGB(24, 40, 70)
 
-local function roleIcon(role: string): string
-	if role == "Artillery" then
-		return "rocket"
-	elseif role == "Capture" then
-		return "truck"
-	elseif role == "Anti-Air" then
-		return "target"
-	end
-	return "tank"
+local ROLE_ICONS = {
+	Artillery = "rocket",
+	Capture = "truck",
+	Transport = "truck",
+	["Anti-Air"] = "target",
+	Infantry = "soldier",
+	["Anti-Tank"] = "soldier",
+	Recon = "soldier",
+	["Air Assault"] = "heli",
+	["Heavy Lift"] = "heli",
+}
+
+function UnitView.roleIcon(role: string): string
+	return ROLE_ICONS[role] or "tank"
 end
+local roleIcon = UnitView.roleIcon
 
 local function decorate(model: Model)
 	if not model:IsA("Model") or not model:GetAttribute("Unit") then
@@ -81,7 +87,7 @@ local function decorate(model: Model)
 	ic.AnchorPoint = Vector2.new(0.5, 0.5)
 	ic.Position = UDim2.fromScale(0.5, 0.5)
 	ic.Parent = iconBox
-	Lib.text({
+	local nameLabel = Lib.text({
 		Text = string.upper(def and def.name or model.Name),
 		TextColor3 = Color3.new(1, 1, 1),
 		FontFace = Theme.Font.Bold,
@@ -92,6 +98,29 @@ local function decorate(model: Model)
 		LayoutOrder = 2,
 		Parent = tag,
 	})
+	local function updateCargo()
+		local parts = { string.upper(def and def.name or model.Name) }
+		local cargo = model:GetAttribute("Cargo") :: number?
+		local supplies = model:GetAttribute("Supplies") :: number?
+		local slung = model:GetAttribute("Slung") :: string?
+		if cargo then
+			table.insert(parts, ("%d SQ"):format(cargo))
+		end
+		if supplies then
+			table.insert(parts, ("%d SUP"):format(supplies))
+		end
+		if slung then
+			table.insert(parts, "+" .. string.upper(slung))
+		end
+		nameLabel.Text = table.concat(parts, " · ")
+	end
+	for _, attr in { "Cargo", "Supplies", "Slung" } do
+		model:GetAttributeChangedSignal(attr):Connect(updateCargo)
+	end
+	updateCargo()
+	if model:GetAttribute("Class") == "air" then
+		gui.StudsOffsetWorldSpace = Vector3.new(0, 8, 0)
+	end
 	local hpBar = Lib.progress({
 		AnchorPoint = Vector2.new(0.5, 0),
 		Position = UDim2.new(0.5, 0, 0, 26),
@@ -148,6 +177,16 @@ function UnitView.selectedUids(): { number }
 			table.insert(out, m:GetAttribute("Uid") :: number)
 		else
 			selected[m] = nil
+		end
+	end
+	return out
+end
+
+function UnitView.selectedModels(): { Model }
+	local out = {}
+	for m in selected do
+		if m.Parent then
+			table.insert(out, m)
 		end
 	end
 	return out
