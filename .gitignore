@@ -1,0 +1,6 @@
+*.rbxl
+*.rbxl.lock
+*.rbxlx.lock
+sourcemap.json
+/build/*.rbxl
+build/*.log

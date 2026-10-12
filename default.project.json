@@ -1,0 +1,62 @@
+{
+  "name": "ForgeAndFrontline",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "Shared": { "$path": "src/shared" }
+    },
+    "ServerScriptService": {
+      "Server": { "$path": "src/server" }
+    },
+    "StarterPlayer": {
+      "$properties": {
+        "CameraMaxZoomDistance": 450,
+        "CameraMinZoomDistance": 8
+      },
+      "StarterPlayerScripts": {
+        "Client": { "$path": "src/client" }
+      }
+    },
+    "Players": {
+      "$properties": { "CharacterAutoLoads": true }
+    },
+    "Workspace": {
+      "$properties": { "Gravity": 196.2, "StreamingEnabled": false }
+    },
+    "Lighting": {
+      "$properties": {
+        "Technology": "ShadowMap",
+        "ClockTime": 14.5,
+        "Brightness": 2.4,
+        "Ambient": [0.45, 0.47, 0.5],
+        "OutdoorAmbient": [0.55, 0.57, 0.6],
+        "EnvironmentDiffuseScale": 0.6,
+        "EnvironmentSpecularScale": 0.4,
+        "GlobalShadows": true,
+        "ShadowSoftness": 0.25
+      },
+      "Atmosphere": {
+        "$className": "Atmosphere",
+        "$properties": {
+          "Density": 0.32,
+          "Offset": 0.1,
+          "Color": [0.78, 0.82, 0.84],
+          "Decay": [0.55, 0.6, 0.62],
+          "Glare": 0.1,
+          "Haze": 1.4
+        }
+      },
+      "Bloom": {
+        "$className": "BloomEffect",
+        "$properties": { "Intensity": 0.35, "Size": 24, "Threshold": 1.6 }
+      },
+      "Grade": {
+        "$className": "ColorCorrectionEffect",
+        "$properties": { "Saturation": -0.08, "Contrast": 0.06, "Brightness": 0.01 }
+      }
+    },
+    "SoundService": {
+      "$properties": { "RespectFilteringEnabled": true }
+    }
+  }
+}
