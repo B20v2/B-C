@@ -57,6 +57,8 @@ local function template(): { [string]: any }
 		Redeemed = {},
 		Receipts = {},
 		Billboard = "",
+		RankLevel = 1,
+		-- Nation = { Name, Flag } once the player founds their nation
 	}
 end
 

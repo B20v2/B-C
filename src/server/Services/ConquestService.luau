@@ -17,6 +17,7 @@ local Shared = ReplicatedStorage.Shared
 local Config = require(Shared.Config)
 local WarMap = require(Shared.Catalog.WarMap)
 local ModelBuilder = require(Shared.ModelBuilder)
+local AssetLibrary = require(Shared.AssetLibrary)
 local Nations = require(script.Parent.Nations)
 
 type Nation = Nations.Nation
@@ -135,10 +136,23 @@ local function buildTrees(world: Folder)
 			for _ = 1, rng:NextInteger(5, 10) do
 				local p = c + Vector3.new(rng:NextNumber(-40, 40), 0, rng:NextNumber(-40, 40))
 				local s = rng:NextNumber(0.8, 1.5)
-				part(world, Vector3.new(1, 5 * s, 1), CFrame.new(p + Vector3.new(0, 2.5 * s, 0)), Color3.fromRGB(96, 74, 52)).CanCollide = false
-				local canopy = part(world, Vector3.new(7 * s, 7 * s, 7 * s), CFrame.new(p + Vector3.new(0, 7 * s, 0)), Color3.fromRGB(62, 96, 50))
-				canopy.Shape = Enum.PartType.Ball
-				canopy.CanCollide = false
+				-- Blender kit trees when imported, simple part trees otherwise
+				local kit = AssetLibrary.instantiate("prop_tree_" .. rng:NextInteger(1, 6), { length = 8 * s })
+				if kit then
+					kit:PivotTo(CFrame.new(p) * CFrame.Angles(0, rng:NextNumber(0, math.pi * 2), 0))
+					for _, d in kit:GetDescendants() do
+						if d:IsA("BasePart") then
+							d.CanCollide = false
+							d.CanQuery = false
+						end
+					end
+					kit.Parent = world
+				else
+					part(world, Vector3.new(1, 5 * s, 1), CFrame.new(p + Vector3.new(0, 2.5 * s, 0)), Color3.fromRGB(96, 74, 52)).CanCollide = false
+					local canopy = part(world, Vector3.new(7 * s, 7 * s, 7 * s), CFrame.new(p + Vector3.new(0, 7 * s, 0)), Color3.fromRGB(62, 96, 50))
+					canopy.Shape = Enum.PartType.Ball
+					canopy.CanCollide = false
+				end
 			end
 		end
 	end

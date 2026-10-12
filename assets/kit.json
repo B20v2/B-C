@@ -1,0 +1,1438 @@
+[
+ {
+  "kind": "building",
+  "w": 8,
+  "d": 8,
+  "name": "small_house",
+  "collection": "Buildings",
+  "tris": 1600,
+  "size": [
+   7.85,
+   8.02,
+   8.75
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 8,
+  "d": 12,
+  "name": "cottage",
+  "collection": "Buildings",
+  "tris": 1924,
+  "size": [
+   7.85,
+   12.03,
+   8.75
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 8,
+  "name": "townhouse",
+  "collection": "Buildings",
+  "tris": 1956,
+  "size": [
+   23.9,
+   7.85,
+   10.45
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 16,
+  "name": "apartment",
+  "collection": "Buildings",
+  "tris": 2512,
+  "size": [
+   23.85,
+   15.93,
+   16.35
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 72,
+  "d": 16,
+  "name": "long_apartment",
+  "collection": "Buildings",
+  "tris": 7740,
+  "size": [
+   71.85,
+   15.93,
+   19.55
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 16,
+  "name": "highrise",
+  "collection": "Buildings",
+  "tris": 5836,
+  "size": [
+   15.85,
+   15.85,
+   65.7
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 8,
+  "d": 8,
+  "name": "road",
+  "collection": "Buildings",
+  "tris": 132,
+  "size": [
+   8.0,
+   8.0,
+   0.34
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 16,
+  "name": "plaza",
+  "collection": "Buildings",
+  "tris": 992,
+  "size": [
+   15.9,
+   15.9,
+   5.05
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 8,
+  "d": 8,
+  "name": "wind_turbine",
+  "collection": "Buildings",
+  "tris": 528,
+  "size": [
+   22.64,
+   7.85,
+   40.77
+  ],
+  "parts": [
+   "Body",
+   "Rotor",
+   "Spin"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 24,
+  "name": "solar_farm",
+  "collection": "Buildings",
+  "tris": 1804,
+  "size": [
+   23.85,
+   23.85,
+   2.71
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 40,
+  "d": 32,
+  "name": "coal_plant",
+  "collection": "Buildings",
+  "tris": 2368,
+  "size": [
+   39.85,
+   31.85,
+   40.31
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 56,
+  "d": 48,
+  "name": "nuclear_plant",
+  "collection": "Buildings",
+  "tris": 3652,
+  "size": [
+   55.85,
+   47.85,
+   24.75
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 8,
+  "d": 8,
+  "name": "water_tower",
+  "collection": "Buildings",
+  "tris": 836,
+  "size": [
+   7.85,
+   7.9,
+   21.65
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 24,
+  "name": "pump_station",
+  "collection": "Buildings",
+  "tris": 892,
+  "size": [
+   23.85,
+   23.85,
+   8.99
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 8,
+  "d": 12,
+  "name": "oil_pump",
+  "collection": "Buildings",
+  "tris": 452,
+  "size": [
+   7.85,
+   12.22,
+   7.59
+  ],
+  "parts": [
+   "Beam",
+   "Body",
+   "Spin"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 16,
+  "name": "oil_tank",
+  "collection": "Buildings",
+  "tris": 1524,
+  "size": [
+   15.85,
+   15.85,
+   5.5
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 24,
+  "name": "small_refinery",
+  "collection": "Buildings",
+  "tris": 1980,
+  "size": [
+   23.85,
+   23.85,
+   21.85
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 40,
+  "d": 32,
+  "name": "medium_refinery",
+  "collection": "Buildings",
+  "tris": 2676,
+  "size": [
+   39.85,
+   31.85,
+   25.85
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 56,
+  "d": 40,
+  "name": "large_refinery",
+  "collection": "Buildings",
+  "tris": 3796,
+  "size": [
+   55.85,
+   40.2,
+   29.85
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 40,
+  "d": 32,
+  "name": "steel_mill",
+  "collection": "Buildings",
+  "tris": 1100,
+  "size": [
+   39.85,
+   31.85,
+   24.45
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 32,
+  "d": 24,
+  "name": "warehouse",
+  "collection": "Buildings",
+  "tris": 1700,
+  "size": [
+   31.85,
+   23.85,
+   9.45
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 32,
+  "d": 24,
+  "name": "light_factory",
+  "collection": "Buildings",
+  "tris": 1268,
+  "size": [
+   31.85,
+   25.72,
+   18.95
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 12,
+  "d": 12,
+  "name": "shop",
+  "collection": "Buildings",
+  "tris": 732,
+  "size": [
+   11.85,
+   12.19,
+   6.9
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 16,
+  "name": "park",
+  "collection": "Buildings",
+  "tris": 616,
+  "size": [
+   15.85,
+   15.85,
+   5.62
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 24,
+  "name": "office",
+  "collection": "Buildings",
+  "tris": 3832,
+  "size": [
+   23.85,
+   23.85,
+   33.85
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 32,
+  "d": 24,
+  "name": "school",
+  "collection": "Buildings",
+  "tris": 1276,
+  "size": [
+   31.85,
+   23.85,
+   9.45
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 32,
+  "d": 32,
+  "name": "hospital",
+  "collection": "Buildings",
+  "tris": 1712,
+  "size": [
+   31.85,
+   31.85,
+   11.74
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 4,
+  "name": "billboard",
+  "collection": "Buildings",
+  "tris": 496,
+  "size": [
+   15.9,
+   3.85,
+   11.85
+  ],
+  "parts": [
+   "Board",
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 24,
+  "name": "research_lab",
+  "collection": "Buildings",
+  "tris": 1030,
+  "size": [
+   23.85,
+   23.85,
+   13.75
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 40,
+  "d": 32,
+  "name": "university",
+  "collection": "Buildings",
+  "tris": 1896,
+  "size": [
+   39.85,
+   31.85,
+   16.95
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 40,
+  "d": 40,
+  "name": "military_academy",
+  "collection": "Buildings",
+  "tris": 2832,
+  "size": [
+   39.85,
+   39.85,
+   18.9
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 32,
+  "d": 32,
+  "name": "small_military_factory",
+  "collection": "Buildings",
+  "tris": 1412,
+  "size": [
+   31.85,
+   31.85,
+   18.95
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 56,
+  "d": 40,
+  "name": "large_military_factory",
+  "collection": "Buildings",
+  "tris": 1916,
+  "size": [
+   55.85,
+   39.85,
+   20.95
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 32,
+  "d": 24,
+  "name": "vehicle_depot",
+  "collection": "Buildings",
+  "tris": 772,
+  "size": [
+   31.85,
+   23.85,
+   8.25
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 16,
+  "name": "radar_station",
+  "collection": "Buildings",
+  "tris": 552,
+  "size": [
+   15.85,
+   15.85,
+   11.95
+  ],
+  "parts": [
+   "Body",
+   "Dish",
+   "Spin"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 8,
+  "d": 8,
+  "name": "ciws",
+  "collection": "Buildings",
+  "tris": 670,
+  "size": [
+   7.85,
+   8.23,
+   7.3
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 16,
+  "name": "sam_site",
+  "collection": "Buildings",
+  "tris": 1892,
+  "size": [
+   15.85,
+   15.85,
+   7.89
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 24,
+  "name": "lr_sam",
+  "collection": "Buildings",
+  "tris": 3628,
+  "size": [
+   23.85,
+   23.85,
+   9.73
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 12,
+  "d": 12,
+  "name": "laser_defense",
+  "collection": "Buildings",
+  "tris": 764,
+  "size": [
+   11.85,
+   11.85,
+   6.85
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 12,
+  "d": 12,
+  "name": "tor_system",
+  "collection": "Buildings",
+  "tris": 670,
+  "size": [
+   11.85,
+   11.85,
+   7.3
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 24,
+  "name": "s300",
+  "collection": "Buildings",
+  "tris": 3628,
+  "size": [
+   23.85,
+   23.85,
+   9.73
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 28,
+  "d": 28,
+  "name": "s400",
+  "collection": "Buildings",
+  "tris": 4060,
+  "size": [
+   27.85,
+   27.85,
+   11.06
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 12,
+  "d": 12,
+  "name": "crotale",
+  "collection": "Buildings",
+  "tris": 670,
+  "size": [
+   11.85,
+   11.85,
+   7.3
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 24,
+  "d": 24,
+  "name": "samp_t",
+  "collection": "Buildings",
+  "tris": 3628,
+  "size": [
+   23.85,
+   23.85,
+   9.73
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 12,
+  "d": 20,
+  "name": "srbm_launcher",
+  "collection": "Buildings",
+  "tris": 1970,
+  "size": [
+   11.85,
+   19.85,
+   14.45
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 24,
+  "name": "glcm_launcher",
+  "collection": "Buildings",
+  "tris": 1936,
+  "size": [
+   15.85,
+   23.85,
+   7.32
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 24,
+  "name": "mrbm_launcher",
+  "collection": "Buildings",
+  "tris": 2114,
+  "size": [
+   15.85,
+   23.85,
+   17.45
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 24,
+  "name": "cluster_launcher",
+  "collection": "Buildings",
+  "tris": 2114,
+  "size": [
+   15.85,
+   23.85,
+   14.45
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 28,
+  "name": "hypersonic_launcher",
+  "collection": "Buildings",
+  "tris": 2402,
+  "size": [
+   15.85,
+   27.85,
+   17.45
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 12,
+  "d": 20,
+  "name": "otr_launcher",
+  "collection": "Buildings",
+  "tris": 1970,
+  "size": [
+   11.85,
+   19.85,
+   14.45
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 24,
+  "name": "scalp_battery",
+  "collection": "Buildings",
+  "tris": 1936,
+  "size": [
+   15.85,
+   23.85,
+   7.32
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 12,
+  "d": 12,
+  "name": "hornet_launcher",
+  "collection": "Buildings",
+  "tris": 752,
+  "size": [
+   11.85,
+   11.85,
+   5.74
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 28,
+  "name": "raptor_launcher",
+  "collection": "Buildings",
+  "tris": 540,
+  "size": [
+   15.85,
+   27.85,
+   5.86
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 16,
+  "name": "swarm_rack",
+  "collection": "Buildings",
+  "tris": 1328,
+  "size": [
+   15.85,
+   15.85,
+   5.74
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "building",
+  "w": 16,
+  "d": 28,
+  "name": "falcon_ramp",
+  "collection": "Buildings",
+  "tris": 540,
+  "size": [
+   15.85,
+   27.85,
+   5.86
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_truck",
+  "collection": "Vehicles",
+  "tris": 664,
+  "size": [
+   3.51,
+   8.02,
+   4.0
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_marder",
+  "collection": "Vehicles",
+  "tris": 800,
+  "size": [
+   4.55,
+   8.85,
+   3.45
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_leopard",
+  "collection": "Vehicles",
+  "tris": 880,
+  "size": [
+   5.15,
+   13.5,
+   3.95
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_himars",
+  "collection": "Vehicles",
+  "tris": 788,
+  "size": [
+   3.51,
+   9.12,
+   4.41
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_gepard",
+  "collection": "Vehicles",
+  "tris": 906,
+  "size": [
+   4.75,
+   9.0,
+   4.97
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_bmp",
+  "collection": "Vehicles",
+  "tris": 800,
+  "size": [
+   4.55,
+   8.85,
+   3.45
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_t90",
+  "collection": "Vehicles",
+  "tris": 880,
+  "size": [
+   5.15,
+   13.5,
+   3.95
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_tor_m",
+  "collection": "Vehicles",
+  "tris": 906,
+  "size": [
+   4.75,
+   9.0,
+   4.97
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_vbci",
+  "collection": "Vehicles",
+  "tris": 840,
+  "size": [
+   4.76,
+   8.7,
+   3.45
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_leclerc",
+  "collection": "Vehicles",
+  "tris": 880,
+  "size": [
+   5.15,
+   13.5,
+   3.95
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "unit",
+  "name": "unit_caesar",
+  "collection": "Vehicles",
+  "tris": 676,
+  "size": [
+   3.51,
+   9.99,
+   4.93
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "projectile",
+  "name": "proj_HORNET",
+  "collection": "Vehicles",
+  "tris": 148,
+  "size": [
+   4.4,
+   4.15,
+   0.86
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "projectile",
+  "name": "proj_RAPTOR",
+  "collection": "Vehicles",
+  "tris": 280,
+  "size": [
+   4.86,
+   5.4,
+   1.44
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "projectile",
+  "name": "proj_SRBM",
+  "collection": "Vehicles",
+  "tris": 182,
+  "size": [
+   1.6,
+   6.0,
+   1.6
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "projectile",
+  "name": "proj_GLCM",
+  "collection": "Vehicles",
+  "tris": 226,
+  "size": [
+   3.2,
+   4.68,
+   1.28
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "projectile",
+  "name": "proj_MRBM",
+  "collection": "Vehicles",
+  "tris": 182,
+  "size": [
+   1.83,
+   7.4,
+   1.83
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "projectile",
+  "name": "proj_CLUSTER",
+  "collection": "Vehicles",
+  "tris": 182,
+  "size": [
+   1.73,
+   6.6,
+   1.73
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "projectile",
+  "name": "proj_HYPERSONIC",
+  "collection": "Vehicles",
+  "tris": 182,
+  "size": [
+   1.41,
+   6.4,
+   1.41
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "truck",
+  "name": "fuel_truck",
+  "collection": "Vehicles",
+  "tris": 776,
+  "size": [
+   3.36,
+   8.0,
+   4.15
+  ],
+  "parts": [
+   "Body",
+   "Front"
+  ]
+ },
+ {
+  "kind": "site",
+  "w": 130,
+  "d": 130,
+  "name": "site_city",
+  "collection": "World",
+  "tris": 21972,
+  "size": [
+   130.0,
+   130.0,
+   53.55
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "site",
+  "w": 130,
+  "d": 130,
+  "name": "site_airport",
+  "collection": "World",
+  "tris": 1040,
+  "size": [
+   130.0,
+   130.0,
+   26.25
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "site",
+  "w": 130,
+  "d": 130,
+  "name": "site_oilField",
+  "collection": "World",
+  "tris": 9084,
+  "size": [
+   130.0,
+   130.0,
+   26.1
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "site",
+  "w": 130,
+  "d": 130,
+  "name": "site_nuclear",
+  "collection": "World",
+  "tris": 9304,
+  "size": [
+   130.0,
+   130.0,
+   29.05
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "site",
+  "w": 130,
+  "d": 130,
+  "name": "site_port",
+  "collection": "World",
+  "tris": 3242,
+  "size": [
+   130.0,
+   138.35,
+   27.2
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "site",
+  "w": 130,
+  "d": 130,
+  "name": "site_base",
+  "collection": "World",
+  "tris": 14272,
+  "size": [
+   130.0,
+   130.0,
+   15.51
+  ],
+  "parts": [
+   "Body",
+   "Lights"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_tree_1",
+  "collection": "World",
+  "tris": 60,
+  "size": [
+   2.88,
+   2.55,
+   4.95
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_tree_2",
+  "collection": "World",
+  "tris": 60,
+  "size": [
+   4.32,
+   3.83,
+   7.43
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_tree_3",
+  "collection": "World",
+  "tris": 68,
+  "size": [
+   3.51,
+   3.42,
+   5.64
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_tree_4",
+  "collection": "World",
+  "tris": 68,
+  "size": [
+   5.26,
+   5.13,
+   8.46
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_tree_5",
+  "collection": "World",
+  "tris": 40,
+  "size": [
+   2.24,
+   2.13,
+   3.85
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_tree_6",
+  "collection": "World",
+  "tris": 40,
+  "size": [
+   3.13,
+   2.98,
+   5.39
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_rock_1",
+  "collection": "World",
+  "tris": 40,
+  "size": [
+   4.73,
+   3.78,
+   3.08
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_rock_2",
+  "collection": "World",
+  "tris": 40,
+  "size": [
+   9.46,
+   7.55,
+   6.16
+  ],
+  "parts": [
+   "Body"
+  ]
+ },
+ {
+  "kind": "prop",
+  "name": "prop_rock_3",
+  "collection": "World",
+  "tris": 40,
+  "size": [
+   15.14,
+   12.09,
+   9.86
+  ],
+  "parts": [
+   "Body"
+  ]
+ }
+]

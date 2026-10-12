@@ -97,4 +97,24 @@ Config.Codes = {
 	RELEASE = 100000,
 }
 
+---------------------------------------------------------------------------
+-- Nation identity, ranks and world
+---------------------------------------------------------------------------
+Config.NationNameMin = 3
+Config.NationNameMax = 20
+
+-- Power = population + building value / 100 + techs * 150 + vehicles * 80
+-- + strategic points * 600. Crossing a threshold pays the reward once.
+Config.Ranks = {
+	{ name = "Outpost", power = 0, reward = 0 },
+	{ name = "Township", power = 500, reward = 10000 },
+	{ name = "City-State", power = 2500, reward = 30000 },
+	{ name = "Republic", power = 10000, reward = 80000 },
+	{ name = "Federation", power = 40000, reward = 200000 },
+	{ name = "Superpower", power = 150000, reward = 500000 },
+}
+
+Config.DayLength = 16 * 60 -- seconds for a full day + night
+Config.NightShare = 0.3 -- fraction of the cycle spent at night
+
 return Config

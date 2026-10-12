@@ -34,6 +34,7 @@ Net.Functions = {
 	"ClaimGroup",
 	"RedeemCode",
 	"SetBillboard",
+	"SetNation",
 	"GetSnapshot",
 	"StudioPurchase",
 }

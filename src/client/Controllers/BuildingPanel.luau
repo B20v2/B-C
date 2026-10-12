@@ -1,9 +1,9 @@
 --[[
-	BuildingPanel
-	Click any of your buildings to inspect it. Layout follows the classic
-	"Medium Refinery" panel: four stat cards, "What it is doing", then a
+	BuildingPanel - the Inspector
+	Click any of your buildings: a panel docks on the right (the world stays
+	visible) with a live 3D header, status, a 2x2 stat grid, activity and a
 	building-specific section (fuel destinations, production queue, launcher
-	readiness...) and Repair / Move / Delete actions.
+	readiness, billboard text), then Repair / Move / Demolish.
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -31,41 +31,28 @@ local Placement = require(script.Parent.Placement)
 local Sounds = require(script.Parent.Sounds)
 
 local New = Lib.New
+local C = Theme.Color
 
 local BuildingPanel = {}
 
 type StatCard = { value: TextLabel, sub: TextLabel, caption: TextLabel, bar: Lib.Progress }
 
 local function statCard(parent: Instance, order: number): StatCard
-	local card = Lib.card({ LayoutOrder = order, Size = UDim2.new(0.25, -6, 0, 88), Parent = parent }, { Lib.pad(10, 12) })
+	local card = Lib.card({ LayoutOrder = order, Parent = parent }, { Lib.pad(9, 11) })
 	local caption = Lib.caption("", { Parent = card })
-	local value = Lib.text({
-		Text = "-",
-		FontFace = Theme.Font.Bold,
-		TextSize = Theme.TextSize.Big,
-		Position = UDim2.fromOffset(0, 16),
-		Size = UDim2.new(1, 0, 0, 30),
-		Parent = card,
-	})
-	local sub = Lib.text({
-		Text = "",
-		TextSize = Theme.TextSize.Tiny,
-		TextColor3 = Theme.Color.Muted,
-		Position = UDim2.fromOffset(0, 46),
-		Size = UDim2.new(1, 0, 0, 14),
-		Parent = card,
-	})
-	local bar = Lib.progress({ Position = UDim2.new(0, 0, 1, -4), Size = UDim2.new(1, 0, 0, 4), Parent = card })
+	local value = Lib.display({ Text = "-", TextSize = 20, Position = UDim2.fromOffset(0, 15), Size = UDim2.new(1, 0, 0, 24), Parent = card })
+	local sub = Lib.text({ Text = "", TextSize = 11, TextColor3 = C.Muted, FontFace = Theme.Font.BodyBold, Position = UDim2.fromOffset(0, 40), Size = UDim2.new(1, 0, 0, 13), Parent = card })
+	local bar = Lib.progress({ Segments = 8, Position = UDim2.new(0, 0, 1, -5), Size = UDim2.new(1, 0, 0, 5), Parent = card })
 	return { value = value, sub = sub, caption = caption, bar = bar }
 end
 
-local function setStat(c: StatCard, caption: string, value: string, sub: string, frac: number?)
+local function setStat(c: StatCard, caption: string, value: string, sub: string, frac: number?, color: Color3?)
 	c.caption.Text = string.upper(caption)
 	c.value.Text = value
 	c.sub.Text = sub
 	c.bar.frame.Visible = frac ~= nil
 	if frac then
-		c.bar.set(frac)
+		c.bar.set(frac, color)
 	end
 end
 
@@ -115,50 +102,73 @@ local function consumers(): { { uid: number, name: string, model: Model, cap: nu
 	return out
 end
 
+local function statusColor(status: string, model: Model): Color3
+	if model:GetAttribute("Damaged") then
+		return C.Bad
+	elseif status:find("Not Enough") or status:find("No Road") or status:find("Waiting") or status:find("Full") then
+		return C.Gold
+	elseif model:GetAttribute("FinishAt") then
+		return C.Info
+	end
+	return C.Good
+end
+
+local function section(parent: Instance, title: string, order: number): (Frame, TextLabel)
+	local s = Lib.card({ LayoutOrder = order, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = parent }, { Lib.pad(10, 12), Lib.list("y", 6) })
+	local t = Lib.caption(title, { TextColor3 = C.Accent, LayoutOrder = 0, Parent = s })
+	return s, t
+end
+
 function BuildingPanel.open(model: Model)
 	local def = Buildings.get(model:GetAttribute("BuildingId") :: string)
 	if not def then
 		return
 	end
 	local uid = model:GetAttribute("Uid") :: number
-	local win = Modal.open(def.name, model:GetAttribute("Status") :: string? or "", 720, 620)
+	local win = Modal.openSide(def.name, ("%s · %s · %dx%d"):format(def.category == "Civilian" and "CIVIL" or "MILITARY", string.upper(def.tab), def.size[1], def.size[2]), 440)
 	Sounds.play("Open")
-	Lib.viewport(ModelBuilder.building(def), { Parent = win.iconHolder }, 40)
+	Lib.viewport(ModelBuilder.building(def), { Parent = win.iconHolder }, 40, 30)
 
-	local scroll = New("ScrollingFrame", {
+	local scroll = Lib.scroll({ Size = UDim2.new(1, 0, 1, -54), Parent = win.body }, { Lib.list("y", 8), Lib.pad(0, 6, 6, 0) })
+
+	-- status line
+	local statusRow = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = 1, Parent = scroll })
+	local statusDot = New("Frame", { BackgroundColor3 = C.Good, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 2, 0.5, 0), Size = UDim2.fromOffset(8, 8), Parent = statusRow }, { Lib.round() })
+	local statusText = Lib.display({ Text = "", TextSize = 13, Position = UDim2.fromOffset(18, 0), Size = UDim2.new(1, -18, 1, 0), Parent = statusRow })
+
+	-- stat grid
+	local grid = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 2 * 70 + 8), LayoutOrder = 2, Parent = scroll }, { Lib.grid(UDim2.new(0.5, -4, 0, 70), 8) })
+	local stats = { statCard(grid, 1), statCard(grid, 2), statCard(grid, 3), statCard(grid, 4) }
+
+	-- activity
+	local activity = Lib.card({ LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = scroll }, { Lib.pad(10, 12), Lib.list("y", 3) })
+	Lib.caption("Activity", { TextColor3 = C.Accent, LayoutOrder = 0, Parent = activity })
+	local doingDesc = Lib.text({
+		Text = def.desc,
+		TextSize = 13,
+		TextColor3 = C.TextSoft,
+		TextWrapped = true,
+		Size = UDim2.new(1, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		TextTruncate = Enum.TextTruncate.None,
+		LayoutOrder = 1,
+		Parent = activity,
+	})
+
+	-- actions (fixed at the bottom)
+	local actions = New("Frame", {
 		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollBarThickness = 4,
-		ScrollBarImageColor3 = Theme.Color.Faint,
-		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 0, 1, 0),
+		Size = UDim2.new(1, 0, 0, 44),
 		Parent = win.body,
-	}, { Lib.list("y", 10), Lib.pad(0, 6, 6, 0) })
-
-	-- stat cards
-	local statRow = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 88), LayoutOrder = 1, Parent = scroll }, { Lib.list("x", 8) })
-	local stats = { statCard(statRow, 1), statCard(statRow, 2), statCard(statRow, 3), statCard(statRow, 4) }
-
-	-- what it is doing
-	local doing = Lib.card({ LayoutOrder = 2, Size = UDim2.new(1, 0, 0, 70), Parent = scroll }, { Lib.pad(10, 12) })
-	Lib.caption("What it is doing", { Parent = doing })
-	local doingText = Lib.text({ Text = "", FontFace = Theme.Font.Bold, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 0, 20), Parent = doing })
-	local doingDesc = Lib.text({ Text = def.desc, TextSize = Theme.TextSize.Small, TextColor3 = Theme.Color.Muted, Position = UDim2.fromOffset(0, 38), Size = UDim2.new(1, 0, 0, 16), Parent = doing })
-
-	-- special section container
-	local special = Lib.card({ LayoutOrder = 3, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = scroll }, { Lib.pad(10, 12), Lib.list("y", 6) })
-	local specialTitle = Lib.caption("", { LayoutOrder = 0, Parent = special })
-	special.Visible = false
-
-	-- actions
-	local actions = New("Frame", { BackgroundTransparency = 1, LayoutOrder = 9, Size = UDim2.new(1, 0, 0, 40), Parent = scroll }, { Lib.list("x", 8, Enum.HorizontalAlignment.Right) })
+	}, { Lib.list("x", 6, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center) })
 	local repairBtn = Lib.button({
-		Text = "Repair",
-		FontFace = Theme.Font.Bold,
-		TextColor3 = Color3.new(1, 1, 1),
-		BackgroundColor3 = Theme.Color.Good,
-		Size = UDim2.fromOffset(160, 38),
+		Name = "Repair",
+		Variant = "primary",
+		Text = "REPAIR",
+		TextSize = 13,
+		Size = UDim2.fromOffset(160, 40),
 		LayoutOrder = 1,
 		Visible = false,
 		Parent = actions,
@@ -170,11 +180,13 @@ function BuildingPanel.open(model: Model)
 				Notifications.show(res.err, "bad")
 			end
 		end,
-	}, { Lib.corner(6) })
+	})
 	Lib.button({
-		Text = "Move",
-		FontFace = Theme.Font.Bold,
-		Size = UDim2.fromOffset(110, 38),
+		Name = "Move",
+		Variant = "secondary",
+		Text = "MOVE",
+		TextSize = 13,
+		Size = UDim2.fromOffset(96, 40),
 		LayoutOrder = 2,
 		Parent = actions,
 		Activated = function()
@@ -182,24 +194,25 @@ function BuildingPanel.open(model: Model)
 			Hub.call("openBuild")
 			Placement.beginMove(model)
 		end,
-	}, { Lib.corner(6), Lib.stroke() })
+	})
 	local confirmDelete = false
 	local deleteBtn: TextButton
 	deleteBtn = Lib.button({
-		Text = "Delete",
-		FontFace = Theme.Font.Bold,
-		TextColor3 = Theme.Color.Bad,
-		Size = UDim2.fromOffset(150, 38),
+		Name = "Demolish",
+		Variant = "danger",
+		Text = "DEMOLISH",
+		TextSize = 13,
+		Size = UDim2.fromOffset(130, 40),
 		LayoutOrder = 3,
 		Parent = actions,
 		Activated = function()
 			if not confirmDelete then
 				confirmDelete = true
-				deleteBtn.Text = "Click again to confirm"
+				deleteBtn.Text = "CONFIRM?"
 				task.delay(3, function()
 					confirmDelete = false
 					if deleteBtn.Parent then
-						deleteBtn.Text = "Delete"
+						deleteBtn.Text = "DEMOLISH"
 					end
 				end)
 				return
@@ -212,23 +225,24 @@ function BuildingPanel.open(model: Model)
 				Notifications.show(res.err, "bad")
 			end
 		end,
-	}, { Lib.corner(6), Lib.stroke(Theme.Color.Bad, 1, 0.5) })
+	})
 
 	-------------------------------------------------------------------
-	-- building specific sections
+	-- building-specific sections
 	-------------------------------------------------------------------
 	local rebuildSpecial: (() -> ())? = nil
 	local updateSpecial: (() -> ())? = nil
 
 	if def.refine then
-		special.Visible = true
+		local special, specialTitle = section(scroll, "Fuel goes to", 4)
 		local rows: { [number]: { bar: Lib.Progress, amount: TextLabel, radio: Frame } } = {}
 		local signature = ""
-		local listHolder = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = special }, { Lib.list("y", 6) })
+		local listHolder = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = special }, { Lib.list("y", 5) })
 		local function row(destUid: number, name: string, right: string, order: number)
 			local btn = Lib.button({
-				Size = UDim2.new(1, 0, 0, destUid == 0 and 38 or 48),
-				BackgroundColor3 = Theme.Color.Card,
+				Name = destUid == 0 and "Auto" or ("Dest" .. destUid),
+				Size = UDim2.new(1, 0, 0, destUid == 0 and 36 or 46),
+				BackgroundColor3 = C.Inset,
 				LayoutOrder = order,
 				Parent = listHolder,
 				Activated = function()
@@ -237,17 +251,17 @@ function BuildingPanel.open(model: Model)
 						Notifications.show(res.err, "bad")
 					end
 				end,
-			}, { Lib.corner(6), Lib.stroke() })
+			}, { Lib.corner(4), Lib.stroke(C.LineSoft) })
 			local radio = New("Frame", {
-				BackgroundColor3 = Color3.new(1, 1, 1),
-				Position = UDim2.fromOffset(12, destUid == 0 and 9 or 14),
-				Size = UDim2.fromOffset(20, 20),
+				BackgroundColor3 = C.Panel,
+				Position = UDim2.fromOffset(10, destUid == 0 and 9 or 13),
+				Size = UDim2.fromOffset(18, 18),
 				Parent = btn,
-			}, { Lib.round(), Lib.stroke(Theme.Color.Faint, 2) })
-			New("Frame", { Name = "Dot", BackgroundColor3 = Theme.Color.Accent, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(12, 12), Visible = false, Parent = radio }, { Lib.round() })
-			Lib.text({ Text = name, FontFace = Theme.Font.Bold, TextSize = Theme.TextSize.Small, TextColor3 = destUid == 0 and Theme.Color.Accent or Theme.Color.Text, Position = UDim2.fromOffset(44, destUid == 0 and 0 or 4), Size = UDim2.new(0.6, 0, 0, destUid == 0 and 38 or 22), Parent = btn })
-			local amount = Lib.text({ Text = right, TextSize = Theme.TextSize.Tiny, TextColor3 = Theme.Color.TextSoft, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, destUid == 0 and 0 or 4), Size = UDim2.new(0.35, 0, 0, destUid == 0 and 38 or 22), TextXAlignment = Enum.TextXAlignment.Right, Parent = btn })
-			local bar = Lib.progress({ Position = UDim2.new(0, 44, 0, 30), Size = UDim2.new(1, -56, 0, 5), Parent = btn, Visible = destUid ~= 0 })
+			}, { Lib.round(), Lib.stroke(C.Faint, 2) })
+			New("Frame", { Name = "Dot", BackgroundColor3 = C.Accent, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(10, 10), Visible = false, Parent = radio }, { Lib.round() })
+			Lib.text({ Text = name, FontFace = Theme.Font.BodyBold, TextSize = 13, TextColor3 = destUid == 0 and C.Accent or C.Text, Position = UDim2.fromOffset(38, destUid == 0 and 0 or 4), Size = UDim2.new(0.6, 0, 0, destUid == 0 and 36 or 20), Parent = btn })
+			local amount = Lib.text({ Text = right, FontFace = Theme.Font.Mono, TextSize = 11, TextColor3 = C.Muted, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, destUid == 0 and 0 or 4), Size = UDim2.new(0.36, 0, 0, destUid == 0 and 36 or 20), TextXAlignment = Enum.TextXAlignment.Right, Parent = btn })
+			local bar = Lib.progress({ Segments = 10, Position = UDim2.new(0, 38, 0, 30), Size = UDim2.new(1, -48, 0, 5), Parent = btn, Visible = destUid ~= 0 })
 			rows[destUid] = { bar = bar, amount = amount, radio = radio }
 		end
 		local function rebuildList()
@@ -263,12 +277,12 @@ function BuildingPanel.open(model: Model)
 			Lib.clear(listHolder)
 			table.clear(rows)
 			specialTitle.Text = ("FUEL GOES TO (%d BUILDINGS)"):format(#list)
-			row(0, "Auto", "Most free space", 0)
+			row(0, "Auto", "most free space", 0)
 			for i, c in list do
 				row(c.uid, c.name, "", i)
 			end
 			if #list == 0 then
-				Lib.text({ Text = "No fuel users yet - build a Military Factory.", TextSize = Theme.TextSize.Small, TextColor3 = Theme.Color.Muted, LayoutOrder = 99, Parent = listHolder })
+				Lib.text({ Text = "No fuel users yet - build a Military Factory.", TextSize = 12, TextColor3 = C.Muted, LayoutOrder = 99, Parent = listHolder })
 			end
 		end
 		rebuildSpecial = rebuildList
@@ -288,10 +302,10 @@ function BuildingPanel.open(model: Model)
 			end
 		end
 	elseif def.factory then
-		special.Visible = true
-		local queueHolder = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = special }, { Lib.list("y", 4) })
-		Lib.caption("Build", { LayoutOrder = 2, Parent = special })
-		local options = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 3, Parent = special }, { Lib.grid(UDim2.new(0.25, -6, 0, 74), 6) })
+		local queueSection, queueTitle = section(scroll, "Production queue", 4)
+		local queueHolder = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = queueSection }, { Lib.list("y", 4) })
+		local optSection = section(scroll, "Build orders", 5)
+		local options = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = optSection }, { Lib.grid(UDim2.new(0.5, -4, 0, 58), 6) })
 		local lastQueue = ""
 		local function renderOptions()
 			Lib.clear(options)
@@ -307,8 +321,9 @@ function BuildingPanel.open(model: Model)
 				local d = item.def
 				local ok = Unlocks.check(d, acc)
 				local btn = Lib.button({
+					Name = "Order_" .. d.id,
 					LayoutOrder = (ok and 0 or 100) + i,
-					BackgroundColor3 = ok and Theme.Color.Card or Theme.Color.CardAlt,
+					BackgroundColor3 = ok and C.Raised or C.Inset,
 					Parent = options,
 					Activated = function()
 						if not ok then
@@ -322,11 +337,18 @@ function BuildingPanel.open(model: Model)
 							Notifications.show(res.err, "bad")
 						end
 					end,
-				}, { Lib.corner(6), Lib.stroke(), Lib.pad(6, 8) })
-				Lib.text({ Text = (item.kind == "weapon" and (d :: any).short or d.name), FontFace = Theme.Font.Bold, TextSize = Theme.TextSize.Small, TextColor3 = ok and Theme.Color.Text or Theme.Color.Faint, Size = UDim2.new(1, 0, 0, 18), Parent = btn })
-				Lib.text({ Text = ok and ("%d fuel · %d steel · %s"):format(d.fuel, d.steel, Format.duration(d.time)) or "Locked", TextSize = Theme.TextSize.Tiny, TextColor3 = ok and Theme.Color.Muted or Theme.Color.Bad, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 0, 14), Parent = btn })
-				local chip = Lib.chip("$" .. Format.commas(d.cost), Theme.Color.GoodSoft, Theme.Color.Good, { Position = UDim2.fromOffset(0, 38), Size = UDim2.fromOffset(0, 20) })
-				chip.Parent = btn
+				}, { Lib.corner(4), Lib.stroke(ok and C.LineSoft or C.Inset), Lib.pad(6, 8) })
+				Lib.display({ Text = string.upper(item.kind == "weapon" and (d :: any).short or d.name), TextSize = 13, TextColor3 = ok and C.Text or C.Faint, Size = UDim2.new(1, -60, 0, 16), Parent = btn })
+				Lib.display({ Text = "$" .. Format.short(d.cost), TextSize = 12, TextColor3 = ok and C.Good or C.Faint, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(58, 16), TextXAlignment = Enum.TextXAlignment.Right, Parent = btn })
+				Lib.text({
+					Text = ok and ("%d fuel · %d steel · %s"):format(d.fuel, d.steel, Format.duration(d.time)) or "LOCKED",
+					TextSize = 11,
+					FontFace = Theme.Font.BodyBold,
+					TextColor3 = ok and C.Muted or C.Accent,
+					Position = UDim2.fromOffset(0, 22),
+					Size = UDim2.new(1, 0, 0, 14),
+					Parent = btn,
+				})
 			end
 		end
 		renderOptions()
@@ -342,39 +364,37 @@ function BuildingPanel.open(model: Model)
 				items = {}
 			end
 			Lib.clear(queueHolder)
-			specialTitle.Text = ("PRODUCTION QUEUE (%d / %d)"):format(#items, ClientState.get("queueLimit") or Config.MaxQueuePerFactory)
+			queueTitle.Text = ("PRODUCTION QUEUE (%d / %d)"):format(#items, ClientState.get("queueLimit") or Config.MaxQueuePerFactory)
 			if #items == 0 then
-				Lib.text({ Text = "Queue is empty - pick something below.", TextSize = Theme.TextSize.Small, TextColor3 = Theme.Color.Muted, Parent = queueHolder })
+				Lib.text({ Text = "Queue is empty - pick a build order below.", TextSize = 12, TextColor3 = C.Muted, Parent = queueHolder })
 			end
 			for i, it in items do
 				local cat = it.k == "unit" and Units.get(it.id) or Weapons.get(it.id)
-				local rowF = Lib.card({ Size = UDim2.new(1, 0, 0, 34), LayoutOrder = i, Parent = queueHolder })
-				Lib.text({ Text = cat and cat.name or it.id, FontFace = Theme.Font.Semi, TextSize = Theme.TextSize.Small, Position = UDim2.fromOffset(10, 0), Size = UDim2.new(0.4, 0, 0, 22), Parent = rowF })
-				local bar = Lib.progress({ Position = UDim2.new(0, 10, 0, 24), Size = UDim2.new(0.85, -20, 0, 4), Parent = rowF })
-				bar.set(it.p or 0, Theme.Color.Accent)
+				local rowF = Lib.inset({ Size = UDim2.new(1, 0, 0, 36), LayoutOrder = i, Parent = queueHolder })
+				Lib.text({ Text = cat and cat.name or it.id, FontFace = Theme.Font.BodyBold, TextSize = 13, Position = UDim2.fromOffset(10, 2), Size = UDim2.new(0.6, 0, 0, 20), Parent = rowF })
+				local bar = Lib.progress({ Segments = 10, Position = UDim2.new(0, 10, 0, 24), Size = UDim2.new(1, -90, 0, 5), Parent = rowF })
+				bar.set(it.p or 0, i == 1 and C.Accent or C.Faint)
 				Lib.button({
-					Text = "Cancel",
-					TextSize = Theme.TextSize.Tiny,
-					TextColor3 = Theme.Color.Bad,
+					Text = "CANCEL",
+					Variant = "danger",
+					TextSize = 10,
 					AnchorPoint = Vector2.new(1, 0.5),
 					Position = UDim2.new(1, -6, 0.5, 0),
-					Size = UDim2.fromOffset(60, 24),
+					Size = UDim2.fromOffset(64, 24),
 					Parent = rowF,
 					Activated = function()
 						Net.request("CancelProduction", uid, i)
 					end,
-				}, { Lib.corner(5), Lib.stroke() })
+				})
 			end
 		end
 	elseif def.launcher then
-		special.Visible = true
-		specialTitle.Text = "STRIKE"
-		Lib.text({ Text = "Open the war map with Travel, pick this weapon in the hotbar and click a target.", TextSize = Theme.TextSize.Small, TextColor3 = Theme.Color.TextSoft, TextWrapped = true, Size = UDim2.new(1, 0, 0, 34), LayoutOrder = 1, Parent = special })
+		local special = section(scroll, "Strike", 4)
+		Lib.text({ Text = "Open the war map, pick this weapon in the hotbar and click a target.", TextSize = 13, TextColor3 = C.TextSoft, TextWrapped = true, Size = UDim2.new(1, 0, 0, 34), LayoutOrder = 1, Parent = special })
 		Lib.button({
-			Text = "Open War Map",
-			FontFace = Theme.Font.Bold,
-			TextColor3 = Color3.new(1, 1, 1),
-			BackgroundColor3 = Theme.Color.Military,
+			Variant = "primary",
+			Text = "OPEN WAR MAP",
+			TextSize = 13,
 			Size = UDim2.fromOffset(180, 36),
 			LayoutOrder = 2,
 			Parent = special,
@@ -382,27 +402,19 @@ function BuildingPanel.open(model: Model)
 				Modal.close()
 				Hub.call("goWar", "mainland")
 			end,
-		}, { Lib.corner(6) })
+		})
 	elseif def.billboard then
-		special.Visible = true
-		specialTitle.Text = "BILLBOARD MESSAGE"
-		local box = New("TextBox", {
+		local special = section(scroll, "Billboard message", 4)
+		local box = Lib.textbox({
 			Text = ClientState.get("billboard") or "",
-			PlaceholderText = "Type your message (40 characters)",
-			FontFace = Theme.Font.Semi,
-			TextSize = Theme.TextSize.Body,
-			TextColor3 = Theme.Color.Text,
-			BackgroundColor3 = Color3.new(1, 1, 1),
-			ClearTextOnFocus = false,
-			Size = UDim2.new(1, 0, 0, 36),
+			PlaceholderText = "Your message (40 characters)",
 			LayoutOrder = 1,
 			Parent = special,
-		}, { Lib.corner(6), Lib.stroke(), Lib.pad(0, 10) })
+		})
 		Lib.button({
-			Text = "Save Message",
-			FontFace = Theme.Font.Bold,
-			TextColor3 = Color3.new(1, 1, 1),
-			BackgroundColor3 = Theme.Color.Accent,
+			Variant = "primary",
+			Text = "SAVE MESSAGE",
+			TextSize = 13,
 			Size = UDim2.fromOffset(160, 34),
 			LayoutOrder = 2,
 			Parent = special,
@@ -414,7 +426,7 @@ function BuildingPanel.open(model: Model)
 					Notifications.show(res.err, "bad")
 				end
 			end,
-		}, { Lib.corner(6) })
+		})
 	end
 
 	-------------------------------------------------------------------
@@ -431,11 +443,11 @@ function BuildingPanel.open(model: Model)
 		if finishAt then
 			local start = (model:GetAttribute("BuildStart") :: number?) or now
 			local frac = (now - start) / math.max(0.1, finishAt - start)
-			status = ("Under Construction - %s left"):format(Format.duration(finishAt - now))
-			setStat(stats[1], "Construction", Format.percent(frac * 100), "Being built", frac)
-			setStat(stats[2], "Cost", Format.cash(def.cost), "Full refund if cancelled", nil)
-			setStat(stats[3], "Health", ("%d"):format(def.hp), "Max health", nil)
-			setStat(stats[4], "Size", ("%dx%d"):format(def.size[1], def.size[2]), "Grid cells", nil)
+			status = ("Under construction · %s left"):format(Format.duration(finishAt - now))
+			setStat(stats[1], "Construction", Format.percent(frac * 100), "being built", frac, C.Info)
+			setStat(stats[2], "Cost", Format.cash(def.cost), "full refund if cancelled", nil)
+			setStat(stats[3], "Health", ("%d"):format(def.hp), "max structure", nil)
+			setStat(stats[4], "Footprint", ("%dx%d"):format(def.size[1], def.size[2]), "grid cells", nil)
 		else
 			local eff = ((model:GetAttribute("Eff") :: number?) or 0) / 100
 			local hp = (model:GetAttribute("Hp") :: number?) or def.hp
@@ -443,74 +455,77 @@ function BuildingPanel.open(model: Model)
 			if def.refine then
 				local oil = (model:GetAttribute("Oil") :: number?) or 0
 				local fuel = (model:GetAttribute("Fuel") :: number?) or 0
-				setStat(stats[1], "Oil Stored", ("%s / %s"):format(Format.commas(oil), Format.commas(def.refine.oilCap)), "Waiting To Refine", oil / def.refine.oilCap)
-				setStat(stats[2], "Fuel Stored", ("%s / %s"):format(Format.commas(fuel), Format.commas(def.refine.fuelCap)), "Waiting For Trucks", fuel / def.refine.fuelCap)
-				setStat(stats[3], "Fuel Output", ("%s / Min"):format(Format.short(def.refine.rate * eff)), "Refined From Oil", nil)
-				setStat(stats[4], "Oil Arriving", ("+%s / Min"):format(Format.short((model:GetAttribute("OilArriving") :: number?) or 0)), "From Your Oil Pumps", nil)
+				setStat(stats[1], "Oil stored", ("%s/%s"):format(Format.short(oil), Format.short(def.refine.oilCap)), "waiting to refine", oil / def.refine.oilCap)
+				setStat(stats[2], "Fuel stored", ("%s/%s"):format(Format.short(fuel), Format.short(def.refine.fuelCap)), "waiting for trucks", fuel / def.refine.fuelCap)
+				setStat(stats[3], "Fuel output", ("%s/min"):format(Format.short(def.refine.rate * eff)), "refined from oil", eff, C.Teal)
+				setStat(stats[4], "Oil arriving", ("+%s/min"):format(Format.short((model:GetAttribute("OilArriving") :: number?) or 0)), "from your oil pumps", nil)
 			elseif def.factory then
 				local fuel = (model:GetAttribute("Fuel") :: number?) or 0
-				setStat(stats[1], "Fuel Stored", ("%s / %s"):format(Format.commas(fuel), Format.commas(def.fuelCap or 0)), "Delivered By Trucks", fuel / (def.fuelCap or 1))
-				setStat(stats[2], "Steel", Format.short(d.steel or 0), ("+%s / Min nationally"):format(Format.short(d.steelRate or 0)), nil)
-				setStat(stats[3], "Build Speed", ("x%s"):format(tostring(def.factory.speed * ((d.passes or {}).FastBuild and 2 or 1))), "Fast Construction doubles it", nil)
-				setStat(stats[4], "Efficiency", Format.percent(eff * 100), "Workers, power, road", eff)
+				setStat(stats[1], "Fuel stored", ("%s/%s"):format(Format.short(fuel), Format.short(def.fuelCap or 0)), "delivered by trucks", fuel / (def.fuelCap or 1))
+				setStat(stats[2], "Steel", Format.short(d.steel or 0), ("+%s/min nationally"):format(Format.short(d.steelRate or 0)), (d.steelCap or 0) > 0 and (d.steel or 0) / d.steelCap or 0, C.TextSoft)
+				setStat(stats[3], "Build speed", ("x%s"):format(tostring(def.factory.speed * ((d.passes or {}).FastBuild and 2 or 1))), "Fast Construction doubles it", nil)
+				setStat(stats[4], "Efficiency", Format.percent(eff * 100), "workers, power, road", eff, C.Teal)
 			elseif def.launcher then
 				local w = weaponForFamily(def.launcher)
 				local stock = w and ((d.inventory or {})[w.id] or 0) or 0
 				local l = (d.launchers or {})[def.launcher]
 				local reloadUntil = (model:GetAttribute("ReloadUntil") :: number?) or 0
-				setStat(stats[1], "Stockpile", ("%d / %d"):format(stock, w and w.stockCap or 60), (w and w.short or def.launcher) .. " missiles", w and stock / w.stockCap or 0)
-				setStat(stats[2], "Launchers Ready", l and ("%d / %d"):format(l.ready, l.total) or "0", "Of this type", nil)
-				setStat(stats[3], "Reload", reloadUntil > now and Format.duration(reloadUntil - now) or "Ready", ("%ds per launch"):format(def.reload or 20), nil)
-				setStat(stats[4], "Hits Landed", Format.commas(((d.stats or {}).Hits) or 0), "Unlocks better missiles", nil)
+				setStat(stats[1], "Stockpile", ("%d/%d"):format(stock, w and w.stockCap or 60), (w and w.short or def.launcher) .. " rounds", w and stock / w.stockCap or 0)
+				setStat(stats[2], "Launchers ready", l and ("%d/%d"):format(l.ready, l.total) or "0", "of this type", l and l.total > 0 and l.ready / l.total or 0, C.Good)
+				setStat(stats[3], "Reload", reloadUntil > now and Format.duration(reloadUntil - now) or "READY", ("%ds per launch"):format(def.reload or 20), nil)
+				setStat(stats[4], "Hits landed", Format.commas(((d.stats or {}).Hits) or 0), "unlocks better missiles", nil)
 			elseif def.airDefense then
 				local ad = def.airDefense
-				setStat(stats[1], "Range", ("%d"):format(ad.range), "Studs (+25% with radar)", nil)
-				setStat(stats[2], "Hit Chance", Format.percent(ad.chance * 100), "Per engagement", ad.chance)
-				setStat(stats[3], "Reload", Format.duration(ad.reload), "Between shots", nil)
-				setStat(stats[4], "Health", ("%d / %d"):format(hp, def.hp), "Armor", hp / def.hp)
+				setStat(stats[1], "Range", ("%d"):format(ad.range), "studs · +25% with radar", nil)
+				setStat(stats[2], "Intercept", Format.percent(ad.chance * 100), "per engagement", ad.chance, C.Teal)
+				setStat(stats[3], "Reload", Format.duration(ad.reload), "between shots", nil)
+				setStat(stats[4], "Health", ("%d/%d"):format(hp, def.hp), "armor", hp / def.hp, C.Good)
 			elseif def.housing then
-				setStat(stats[1], "Residents", ("up to %s"):format(Format.commas(def.housing * eff)), ("Max %s"):format(Format.commas(def.housing)), eff)
-				setStat(stats[2], "Population", Format.short(d.pop or 0), ("Capacity %s"):format(Format.short(d.popCap or 0)), (d.popCap or 0) > 0 and (d.pop or 0) / d.popCap or 0)
-				setStat(stats[3], "Power Use", ("%d MW"):format(def.power or 0), "Needs electricity", nil)
-				setStat(stats[4], "Water Use", ("%d"):format(def.water or 0), "Needs water", nil)
+				setStat(stats[1], "Residents", ("%s"):format(Format.commas(def.housing * eff)), ("of %s capacity"):format(Format.commas(def.housing)), eff, C.Teal)
+				setStat(stats[2], "Population", Format.short(d.pop or 0), ("nation cap %s"):format(Format.short(d.popCap or 0)), (d.popCap or 0) > 0 and (d.pop or 0) / d.popCap or 0, C.Info)
+				setStat(stats[3], "Power use", ("%d MW"):format(def.power or 0), "needs electricity", nil)
+				setStat(stats[4], "Water use", ("%d"):format(def.water or 0), "needs water", nil)
 			else
 				local outText, outSub = "-", ""
 				if def.powerOut then
-					outText, outSub = ("%s MW"):format(Format.short(def.powerOut * eff)), "Power produced"
+					outText, outSub = ("%s MW"):format(Format.short(def.powerOut * eff)), "power produced"
 				elseif def.waterOut then
-					outText, outSub = Format.short(def.waterOut * eff), "Water supplied"
+					outText, outSub = Format.short(def.waterOut * eff), "water supplied"
 				elseif def.oilOut then
-					outText, outSub = ("%s / Min"):format(Format.short(def.oilOut * eff)), "Oil pumped"
+					outText, outSub = ("%s/min"):format(Format.short(def.oilOut * eff)), "oil pumped"
 				elseif def.steelOut then
-					outText, outSub = ("%s / Min"):format(Format.short(def.steelOut * eff)), "Steel produced"
+					outText, outSub = ("%s/min"):format(Format.short(def.steelOut * eff)), "steel produced"
 				elseif def.rpOut then
-					outText, outSub = ("%s / Min"):format(Format.short(def.rpOut * eff)), "Research points"
+					outText, outSub = ("%s/min"):format(Format.short(def.rpOut * eff)), "research points"
 				elseif def.income then
-					outText, outSub = Format.cash(def.income * eff), "Earned per pay"
+					outText, outSub = Format.cash(def.income * eff), "earned per pay"
 				elseif def.service then
-					outText, outSub = Format.short(def.service.serves * eff), def.service.kind .. " coverage"
+					outText, outSub = Format.short(def.service.serves * eff), string.lower(def.service.kind) .. " coverage"
 				elseif def.storage then
-					outText, outSub = "+" .. Format.short((def.storage.oil or 0) + (def.storage.steel or 0)), "Extra storage"
+					outText, outSub = "+" .. Format.short((def.storage.oil or 0) + (def.storage.steel or 0)), "extra storage"
 				elseif def.depot then
-					outText, outSub = "+" .. def.depot, "Army capacity"
+					outText, outSub = "+" .. def.depot, "army capacity"
+				elseif def.radar then
+					outText, outSub = "+25%", "air defense range"
 				end
 				setStat(stats[1], "Output", outText, outSub, nil)
-				setStat(stats[2], "Efficiency", Format.percent(eff * 100), "Workers, power, water, road", eff)
-				setStat(stats[3], "Workers", ("%d"):format(def.workers or 0), "Needed to run", nil)
-				setStat(stats[4], "Health", ("%d / %d"):format(hp, def.hp), model:GetAttribute("Damaged") and "Knocked out!" or "Structure", hp / def.hp)
+				setStat(stats[2], "Efficiency", Format.percent(eff * 100), "workers, power, water, road", eff, C.Teal)
+				setStat(stats[3], "Workers", ("%d"):format(def.workers or 0), "needed to run", nil)
+				setStat(stats[4], "Health", ("%d/%d"):format(hp, def.hp), model:GetAttribute("Damaged") and "knocked out!" or "structure", hp / def.hp, C.Good)
 			end
 		end
-		win.subtitle.Text = status
-		doingText.Text = status
-		doingText.TextColor3 = (model:GetAttribute("Damaged") or status:find("Not Enough") or status:find("No Road")) and Theme.Color.Bad or Theme.Color.Text
+		statusText.Text = string.upper(status)
+		local col = statusColor(status, model)
+		statusText.TextColor3 = col
+		statusDot.BackgroundColor3 = col
 		if model:GetAttribute("Connected") == false and def.needsRoad then
-			doingDesc.Text = "Place a road next to this building to run at full speed."
+			doingDesc.Text = "No road access: place a road next to this building to run at full speed."
 		else
 			doingDesc.Text = Hub.describeBuilding and Hub.describeBuilding(def) or def.desc
 		end
 		local damaged = model:GetAttribute("Damaged") == true
 		repairBtn.Visible = damaged
-		repairBtn.Text = ("Repair (%s)"):format(Format.cash(math.floor(def.cost * Config.RepairCostRate)))
+		repairBtn.Text = ("REPAIR %s"):format(Format.cash(math.floor(def.cost * Config.RepairCostRate)))
 		if updateSpecial then
 			updateSpecial()
 		end

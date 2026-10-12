@@ -20,6 +20,8 @@ local Grid = require(Shared.Util.Grid)
 local Weapons = require(Shared.Catalog.Weapons)
 local ModelBuilder = require(Shared.ModelBuilder)
 local Unlocks = require(Shared.Util.Unlocks)
+local Flag = require(Shared.Util.Flag)
+local Format = require(Shared.Util.Format)
 local Net = require(Shared.Net)
 
 local Client = script.Parent.Parent
@@ -34,6 +36,7 @@ local Sounds = require(script.Parent.Sounds)
 local UnitView = require(script.Parent.UnitView)
 
 local New = Lib.New
+local C = Theme.Color
 
 local WarView = {}
 
@@ -56,9 +59,11 @@ local selectedWeapon: string? = nil
 local pointer = Vector2.zero
 local boxStart: Vector2? = nil
 local rmbStart: Vector2? = nil
-local slots: { [string]: { btn: TextButton, count: TextLabel, sub: TextLabel } } = {}
+local slots: { [string]: { btn: TextButton, count: TextLabel, sub: TextLabel, reload: Frame, bar: Lib.Progress } } = {}
+local readout: { [string]: TextLabel } = {}
+local targetLabel: TextLabel
+local warOverlay: Frame
 
-local RETICLE = Color3.fromRGB(232, 150, 52)
 local PAN_KEYS = {
 	Enum.KeyCode.W,
 	Enum.KeyCode.A,
@@ -129,47 +134,48 @@ local function renderHotbar()
 	for i, w in list do
 		local btn = Lib.button({
 			Name = w.id,
-			Size = UDim2.fromOffset(66, 66),
-			BackgroundColor3 = Theme.Color.Hud,
-			BackgroundTransparency = 0.25,
+			Size = UDim2.fromOffset(82, 90),
+			BackgroundColor3 = C.Panel,
+			BackgroundTransparency = 0.05,
 			LayoutOrder = i,
 			Parent = hotbar,
 			Activated = function()
 				WarView.selectWeapon(selectedWeapon ~= w.id and w.id or nil)
 			end,
-		}, { Lib.corner(8), Lib.stroke(Color3.new(1, 1, 1), 1, 0.8) })
-		local art = New("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(4, 10), Size = UDim2.new(1, -8, 0, 36), Parent = btn })
+		}, { Lib.corner(4), Lib.stroke(C.Line, 1, 0.3) })
+		local art = Lib.inset({ Position = UDim2.fromOffset(5, 18), Size = UDim2.new(1, -10, 0, 40), Parent = btn })
 		Lib.viewport(ModelBuilder.projectile(w), { Parent = art }, 90)
-		local count = Lib.text({
+		local reload = New("Frame", {
+			Name = "Reload",
+			BackgroundColor3 = C.Ink,
+			BackgroundTransparency = 0.25,
+			AnchorPoint = Vector2.new(0, 1),
+			Position = UDim2.fromScale(0, 1),
+			Size = UDim2.fromScale(1, 0),
+			ZIndex = 3,
+			Parent = art,
+		})
+		local count = Lib.display({
 			Text = "0",
-			TextColor3 = Theme.Color.HudText,
-			FontFace = Theme.Font.Bold,
-			TextSize = Theme.TextSize.Tiny,
+			TextSize = 15,
 			AnchorPoint = Vector2.new(1, 0),
-			Position = UDim2.new(1, -5, 0, 3),
-			Size = UDim2.fromOffset(30, 12),
+			Position = UDim2.new(1, -6, 0, 1),
+			Size = UDim2.fromOffset(44, 16),
 			TextXAlignment = Enum.TextXAlignment.Right,
 			Parent = btn,
 		})
-		local sub = Lib.text({
+		local sub = Lib.display({
 			Text = w.short,
-			TextColor3 = Theme.Color.HudMuted,
-			FontFace = Theme.Font.Bold,
 			TextSize = 10,
-			Position = UDim2.new(0, 0, 1, -16),
+			TextColor3 = C.Muted,
+			Position = UDim2.new(0, 0, 1, -28),
 			Size = UDim2.new(1, 0, 0, 12),
 			TextXAlignment = Enum.TextXAlignment.Center,
 			Parent = btn,
 		})
-		Lib.text({
-			Text = tostring(i),
-			TextColor3 = Theme.Color.HudMuted,
-			TextSize = 10,
-			Position = UDim2.fromOffset(5, 2),
-			Size = UDim2.fromOffset(10, 12),
-			Parent = btn,
-		})
-		slots[w.id] = { btn = btn, count = count, sub = sub }
+		local bar = Lib.progress({ Segments = 6, Position = UDim2.new(0, 6, 1, -11), Size = UDim2.new(1, -12, 0, 4), Parent = btn })
+		Lib.text({ Text = tostring(i), FontFace = Theme.Font.Mono, TextColor3 = C.Accent, TextSize = 11, Position = UDim2.fromOffset(6, 2), Size = UDim2.fromOffset(12, 14), Parent = btn })
+		slots[w.id] = { btn = btn, count = count, sub = sub, reload = reload, bar = bar }
 	end
 	WarView.refreshHotbar()
 end
@@ -181,19 +187,29 @@ function WarView.refreshHotbar()
 	for id, s in slots do
 		local w = Weapons.get(id)
 		if w then
-			s.count.Text = tostring(inv[id] or 0)
+			local stock = inv[id] or 0
+			s.count.Text = tostring(stock)
+			s.count.TextColor3 = stock > 0 and C.Text or C.Bad
+			s.bar.set(stock / w.stockCap, C.Accent)
 			local l = launchers[w.family]
 			local stroke = s.btn:FindFirstChildOfClass("UIStroke") :: UIStroke
 			local isSel = selectedWeapon == id
-			stroke.Color = isSel and Theme.Color.Teal or Color3.new(1, 1, 1)
-			stroke.Transparency = isSel and 0 or 0.8
+			stroke.Color = isSel and C.Accent or C.Line
+			stroke.Transparency = isSel and 0 or 0.3
 			stroke.Thickness = isSel and 2 or 1
+			Lib.setButtonColor(s.btn, isSel and C.AccentSoft or C.Panel)
 			if not l then
 				s.sub.Text = "NO LAUNCHER"
+				s.sub.TextColor3 = C.Bad
+				s.reload.Size = UDim2.fromScale(1, 1)
 			elseif l.ready == 0 and l.nextReady > now then
 				s.sub.Text = ("RELOAD %ds"):format(math.ceil(l.nextReady - now))
+				s.sub.TextColor3 = C.Gold
+				s.reload.Size = UDim2.fromScale(1, 0.6)
 			else
-				s.sub.Text = w.short
+				s.sub.Text = ("%s · %d/%d READY"):format(w.short, l.ready, l.total)
+				s.sub.TextColor3 = C.Muted
+				s.reload.Size = UDim2.fromScale(1, 0)
 			end
 		end
 	end
@@ -222,11 +238,17 @@ end
 function WarView.refreshHint()
 	if selectedWeapon then
 		local w = Weapons.get(selectedWeapon)
-		hint.Text = ("%s selected · Click a target to launch · Right-click to cancel"):format(w and w.name or selectedWeapon)
+		hint.Text = ("ARMED: %s  ·  LMB LAUNCH  ·  RMB CANCEL"):format(string.upper(w and w.name or selectedWeapon))
+		hint.TextColor3 = C.Accent
 	elseif UnitView.count() > 0 then
-		hint.Text = ("%d units selected · Right-click (or tap) the ground to move · Esc to clear"):format(UnitView.count())
+		hint.Text = ("%d VEHICLES SELECTED  ·  RMB / TAP GROUND TO MOVE  ·  ESC CLEAR"):format(UnitView.count())
+		hint.TextColor3 = C.Teal
 	else
-		hint.Text = "WASD pan · Scroll zoom · 1-7 weapons · Drag to select vehicles"
+		hint.Text = "WASD PAN  ·  SCROLL ZOOM  ·  1-7 WEAPONS  ·  DRAG TO SELECT VEHICLES"
+		hint.TextColor3 = C.TextSoft
+	end
+	if readout.sel then
+		readout.sel.Text = ("%d SELECTED"):format(UnitView.count())
 	end
 end
 
@@ -244,62 +266,56 @@ local function makePointLabel(point: Model)
 	local bb = New("BillboardGui", {
 		Name = "PointLabel",
 		Adornee = base,
-		Size = UDim2.fromOffset(260, 56),
-		StudsOffsetWorldSpace = Vector3.new(0, 24, 0),
+		Size = UDim2.fromOffset(250, 74),
+		StudsOffsetWorldSpace = Vector3.new(0, 28, 0),
 		AlwaysOnTop = true,
 		MaxDistance = 6000,
 		LightInfluence = 0,
 		Enabled = false,
 		Parent = labelParent,
 	})
-	local title = Lib.text({
-		Name = "Title",
-		Text = "",
-		TextColor3 = Color3.fromRGB(240, 240, 232),
-		TextStrokeTransparency = 0.5,
-		FontFace = Theme.Font.Semi,
-		TextSize = 13,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Size = UDim2.new(1, 0, 0, 18),
+	local tag = New("Frame", {
+		BackgroundColor3 = C.Panel,
+		BackgroundTransparency = 0.12,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.fromScale(0.5, 0),
+		Size = UDim2.fromOffset(240, 64),
 		Parent = bb,
-	})
-	local bonus = Lib.text({
-		Name = "Bonus",
-		Text = point:GetAttribute("Bonus") :: string? or "",
-		TextColor3 = Color3.fromRGB(200, 220, 180),
-		TextStrokeTransparency = 0.6,
-		TextSize = 11,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Position = UDim2.fromOffset(0, 17),
-		Size = UDim2.new(1, 0, 0, 14),
-		Parent = bb,
-	})
-	local garrison = Lib.progress({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 36), Size = UDim2.fromOffset(120, 4), Parent = bb })
-	local capture = Lib.progress({ AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 44), Size = UDim2.fromOffset(120, 4), Parent = bb })
+	}, { Lib.corner(3), Lib.stroke(C.Line, 1, 0.3), Lib.pad(6, 10) })
+	local stripe = New("Frame", { BackgroundColor3 = C.Muted, BorderSizePixel = 0, Position = UDim2.new(0, -10, 0, -6), Size = UDim2.new(0, 3, 1, 12), Parent = tag })
+	local title = Lib.display({ Name = "Title", Text = "", TextSize = 14, Size = UDim2.new(1, 0, 0, 16), Parent = tag })
+	local status = Lib.display({ Name = "Status", Text = "", TextSize = 11, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 17), Size = UDim2.new(1, 0, 0, 13), Parent = tag })
+	local bonus = Lib.text({ Name = "Bonus", Text = "", FontFace = Theme.Font.BodyBold, TextSize = 11, TextColor3 = C.Good, Position = UDim2.fromOffset(0, 30), Size = UDim2.new(1, 0, 0, 13), Parent = tag })
+	local garrison = Lib.progress({ Segments = 10, Position = UDim2.fromOffset(0, 46), Size = UDim2.new(1, 0, 0, 4), Parent = tag })
+	local capture = Lib.progress({ Position = UDim2.fromOffset(0, 52), Size = UDim2.new(1, 0, 0, 3), Parent = tag })
 	local function update()
 		local owner = (point:GetAttribute("Owner") :: number?) or 0
 		local ownerName = (point:GetAttribute("OwnerName") :: string?) or ""
 		local name = (point:GetAttribute("PointName") :: string?) or point.Name
-		local status
+		local st
+		local col
 		if owner == 0 then
-			status = "UNCAPTURED"
+			st, col = "UNCAPTURED", C.Muted
 		elseif owner == player.UserId then
-			status = "YOURS"
+			st, col = "HELD BY YOU", C.Good
 		else
-			status = string.upper(ownerName)
+			st, col = "HELD BY " .. string.upper(ownerName), (point:GetAttribute("Color") :: Color3?) or C.Bad
 		end
 		if point:GetAttribute("Contested") then
-			status ..= " · CONTESTED"
+			st ..= "  ·  CONTESTED"
+			col = C.Gold
 		end
-		title.Text = ("%s  ·  %s"):format(name, status)
-		title.TextColor3 = owner == player.UserId and Color3.fromRGB(140, 230, 160) or Color3.fromRGB(240, 240, 232)
+		title.Text = name
+		status.Text = st
+		status.TextColor3 = col
+		stripe.BackgroundColor3 = col
 		local g = (point:GetAttribute("Garrison") :: number?) or 0
 		local gm = (point:GetAttribute("MaxGarrison") :: number?) or 1
-		garrison.set(g / gm, Theme.Color.Bad)
+		garrison.set(g / gm, C.Bad)
 		local c = (point:GetAttribute("Capture") :: number?) or 0
 		capture.frame.Visible = c > 0
-		capture.set(c / 100, Theme.Color.Good)
-		bonus.Text = ((point:GetAttribute("Bonus") :: string?) or "") .. ("  ·  garrison %d"):format(g)
+		capture.set(c / 100, C.Good)
+		bonus.Text = (("%s  ·  GARRISON %d"):format(string.upper((point:GetAttribute("Bonus") :: string?) or ""), g))
 	end
 	point.AttributeChanged:Connect(update)
 	update()
@@ -315,34 +331,45 @@ local function makePlotLabels()
 			local bb = New("BillboardGui", {
 				Name = "NationLabel",
 				Adornee = ground,
-				Size = UDim2.fromOffset(300, 40),
-				StudsOffsetWorldSpace = Vector3.new(0, 60, 0),
+				Size = UDim2.fromOffset(300, 46),
+				StudsOffsetWorldSpace = Vector3.new(0, 70, 0),
 				AlwaysOnTop = true,
 				MaxDistance = 8000,
 				LightInfluence = 0,
 				Enabled = false,
 				Parent = labelParent,
 			})
-			local label = Lib.text({
-				Text = "",
-				TextColor3 = Color3.new(1, 1, 1),
-				TextStrokeTransparency = 0.4,
-				FontFace = Theme.Font.Bold,
-				TextSize = 16,
-				TextXAlignment = Enum.TextXAlignment.Center,
-				Size = UDim2.fromScale(1, 1),
+			local tag = New("Frame", {
+				BackgroundColor3 = C.Panel,
+				BackgroundTransparency = 0.12,
+				AnchorPoint = Vector2.new(0.5, 0),
+				Position = UDim2.fromScale(0.5, 0),
+				Size = UDim2.fromOffset(280, 42),
+				Visible = false,
 				Parent = bb,
-			})
+			}, { Lib.corner(3), Lib.stroke(C.Line, 1, 0.3) })
+			local flagBox = New("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(6, 6), Size = UDim2.fromOffset(45, 30), Parent = tag })
+			local name = Lib.display({ Text = "", TextSize = 14, Position = UDim2.fromOffset(60, 4), Size = UDim2.new(1, -66, 0, 18), Parent = tag })
+			local sub = Lib.display({ Text = "", TextSize = 11, Position = UDim2.fromOffset(60, 22), Size = UDim2.new(1, -66, 0, 14), Parent = tag })
+			local lastFlag = ""
 			local function update()
 				local owner = plot:GetAttribute("OwnerId") :: number?
 				local p = owner and Players:GetPlayerByUserId(owner)
 				if not p then
-					label.Text = ""
+					tag.Visible = false
 					return
 				end
+				tag.Visible = true
+				local flag = (p:GetAttribute("NationFlag") :: string?) or ""
+				if flag ~= lastFlag then
+					lastFlag = flag
+					Lib.clear(flagBox)
+					Flag.draw(flagBox, flag ~= "" and flag or nil)
+				end
 				local pvp = p:GetAttribute("Pvp") == true
-				label.Text = ("%s%s  ·  PVP %s"):format(p == player and "YOUR NATION - " or "", string.upper(p.DisplayName), pvp and "ON" or "OFF")
-				label.TextColor3 = pvp and Color3.fromRGB(255, 170, 160) or Color3.fromRGB(220, 230, 240)
+				name.Text = string.upper((p:GetAttribute("NationName") :: string?) or (p.DisplayName .. "'s nation"))
+				sub.Text = (p == player and "YOUR NATION  ·  " or ("COMMANDER " .. string.upper(p.DisplayName) .. "  ·  ")) .. (pvp and "PVP ON" or "PVP OFF")
+				sub.TextColor3 = pvp and C.Bad or C.Muted
 			end
 			plot:GetAttributeChangedSignal("OwnerId"):Connect(update)
 			task.spawn(function()
@@ -373,6 +400,28 @@ local function panHandler(_action: string, state: Enum.UserInputState, input: In
 	return Enum.ContextActionResult.Sink
 end
 
+-- What sits under the reticle: a strategic point, a nation, or open ground.
+local function describeTarget(hit: Vector3): string
+	for point, _ in pointLabels do
+		local base = point:FindFirstChild("Base") :: BasePart?
+		local bp = base and base.CFrame.Position
+		if bp and (Vector3.new(bp.X, 0, bp.Z) - Vector3.new(hit.X, 0, hit.Z)).Magnitude < 110 then
+			return string.upper(((point:GetAttribute("PointName") :: string?) or point.Name))
+		end
+	end
+	for i = 1, Config.MaxPlots do
+		if Grid.insidePlot(Grid.plotOrigin(i), hit) then
+			for _, p in Players:GetPlayers() do
+				if p:GetAttribute("PlotIndex") == i then
+					return string.upper((p:GetAttribute("NationName") :: string?) or p.DisplayName) .. (p == player and "  ·  OWN TERRITORY" or "")
+				end
+			end
+			return "UNCLAIMED LAND"
+		end
+	end
+	return ("GRID %04d·%04d"):format(math.floor(hit.X + 5000), math.floor(hit.Z + 5000))
+end
+
 local function updateCamera(dt: number)
 	if ClientState.mode ~= "war" then
 		return
@@ -397,12 +446,15 @@ local function updateCamera(dt: number)
 	local target = CFrame.lookAt(focus + Vector3.new(0, height, height * 0.22), focus)
 	camera.CFrame = camera.CFrame:Lerp(target, math.min(1, dt * 10))
 
-	-- reticle + blast ring
+	readout.grid.Text = ("GRID %04d·%04d   ALT %dm"):format(math.floor(focus.X + 5000), math.floor(focus.Z + 5000), math.floor(height))
+
+	-- reticle + blast ring + target readout
 	if selectedWeapon then
 		reticle.Position = UDim2.fromOffset(pointer.X, pointer.Y)
 		local hit = groundAt(pointer)
 		if hit then
 			blastRing.CFrame = CFrame.new(hit.X, 0.3, hit.Z) * CFrame.Angles(0, 0, math.rad(90))
+			targetLabel.Text = describeTarget(hit)
 		end
 	end
 end
@@ -422,6 +474,17 @@ function WarView.go(target: string | number)
 		camera.CameraType = Enum.CameraType.Scriptable
 		ContextActionService:BindActionAtPriority("WarPan", panHandler, false, Enum.ContextActionPriority.High.Value + 10, table.unpack(PAN_KEYS))
 		camera.CFrame = CFrame.lookAt(focus + Vector3.new(0, height, height * 0.22), focus)
+	end
+	if target == "mainland" then
+		readout.theater.Text = "MAINLAND"
+	elseif type(target) == "number" then
+		local name = "UNCLAIMED LAND"
+		for _, p in Players:GetPlayers() do
+			if p:GetAttribute("PlotIndex") == target then
+				name = string.upper((p:GetAttribute("NationName") :: string?) or (p.DisplayName .. "'s nation"))
+			end
+		end
+		readout.theater.Text = name
 	end
 	setLabels(true)
 	renderHotbar()
@@ -454,53 +517,128 @@ end
 -- Travel menu
 ---------------------------------------------------------------------------
 function WarView.openTravel()
-	local win = Modal.open("Travel", "Choose where to look. Launch strikes and command units from the map.", 520, 520)
-	local ic = Icons.map(38, Theme.Color.Accent)
-	ic.Position = UDim2.fromOffset(6, 4)
+	local win = Modal.open("Theater Select", "Pick a theater. Launch strikes and command vehicles from the map.", 820, 560)
+	local ic = Icons.map(36, C.Accent)
+	ic.Position = UDim2.fromOffset(8, 6)
 	ic.Parent = win.iconHolder
-	local list = New("ScrollingFrame", {
-		BackgroundTransparency = 1,
-		Size = UDim2.fromScale(1, 1),
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollBarThickness = 4,
-		BorderSizePixel = 0,
-		Parent = win.body,
-	}, { Lib.list("y", 8) })
-	local function entry(order: number, title: string, sub: string, chipText: string?, chipBad: boolean?, onClick: () -> ())
-		local btn = Lib.button({ Size = UDim2.new(1, -6, 0, 58), LayoutOrder = order, Parent = list, Activated = onClick }, { Lib.corner(8), Lib.stroke(), Lib.pad(8, 14) })
-		Lib.text({ Text = title, FontFace = Theme.Font.Bold, Size = UDim2.new(1, -120, 0, 22), Parent = btn })
-		Lib.text({ Text = sub, TextSize = Theme.TextSize.Small, TextColor3 = Theme.Color.Muted, Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, -120, 0, 18), Parent = btn })
-		if chipText then
-			Lib.chip(chipText, chipBad and Theme.Color.BadSoft or Theme.Color.GoodSoft, chipBad and Theme.Color.Bad or Theme.Color.Good, {
-				AnchorPoint = Vector2.new(1, 0.5),
-				Position = UDim2.new(1, 0, 0.5, 0),
-				Parent = btn,
-			})
+
+	-- left: fixed theaters
+	local left = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0, 300, 1, 0), Parent = win.body }, { Lib.list("y", 10) })
+	local function theater(name: string, order: number, h: number, title: string, sub: string, accent: Color3, onClick: () -> ()): TextButton
+		local btn = Lib.button({
+			Name = name,
+			BackgroundColor3 = C.Raised,
+			Size = UDim2.new(1, 0, 0, h),
+			LayoutOrder = order,
+			Parent = left,
+			Activated = onClick,
+		}, { Lib.corner(Theme.Radius.Card), Lib.stroke(accent, 1, 0.55) })
+		New("Frame", { BackgroundColor3 = accent, BorderSizePixel = 0, Size = UDim2.new(0, 3, 1, 0), Parent = btn })
+		Lib.display({ Text = string.upper(title), TextSize = 17, Position = UDim2.fromOffset(16, 10), Size = UDim2.new(1, -28, 0, 20), Parent = btn })
+		Lib.text({
+			Text = sub,
+			TextSize = 12,
+			TextColor3 = C.Muted,
+			TextWrapped = true,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			Position = UDim2.fromOffset(16, 32),
+			Size = UDim2.new(1, -28, 0, 30),
+			Parent = btn,
+		})
+		return btn
+	end
+
+	local held, total = 0, 0
+	local mainland = workspace:FindFirstChild("Mainland")
+	local points = mainland and mainland:FindFirstChild("Points")
+	if points then
+		for _, p in points:GetChildren() do
+			total += 1
+			if p:GetAttribute("Owner") == player.UserId then
+				held += 1
+			end
 		end
 	end
-	entry(1, "Mainland - War Map", "Capture strategic points for big bonuses", "WARZONE", true, function()
+	local deployed = 0
+	for _, m in UnitView.mine() do
+		if m:GetAttribute("Location") == "mainland" then
+			deployed += 1
+		end
+	end
+	local war = theater("Mainland", 1, 170, "Mainland", "Contested continent. Capture airports, oil fields and ports for permanent bonuses.", C.Bad, function()
 		WarView.go("mainland")
 	end)
-	entry(2, "Your Nation (overview)", "Command units and watch your city from above", nil, nil, function()
+	Lib.hazard({ AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 3, 1, 0), Size = UDim2.new(1, -3, 0, 5), Parent = war }, C.Bad, C.Raised, 9)
+	Lib.chip("WARZONE", C.BadSoft, C.Bad, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 10), Parent = war })
+	Lib.caption("Points held", { Position = UDim2.fromOffset(16, 80), Size = UDim2.fromOffset(120, 14), Parent = war })
+	Lib.display({ Text = ("%d / %d"):format(held, total), TextSize = 26, TextColor3 = held > 0 and C.Good or C.Text, Position = UDim2.fromOffset(16, 96), Size = UDim2.fromOffset(140, 30), Parent = war })
+	Lib.caption("Deployed", { Position = UDim2.fromOffset(160, 80), Size = UDim2.fromOffset(120, 14), Parent = war })
+	Lib.display({ Text = tostring(deployed), TextSize = 26, Position = UDim2.fromOffset(160, 96), Size = UDim2.fromOffset(120, 30), Parent = war })
+
+	theater("Overview", 2, 74, "Your nation · overview", "Command vehicles and watch your city from above.", C.Accent, function()
 		WarView.go(ClientState.get("plot") or 1)
 	end)
-	entry(3, "Your Nation (walk)", "Back to your character", nil, nil, function()
+	theater("Walk", 3, 74, "Your nation · on foot", "Back to your commander.", C.Teal, function()
 		Modal.close()
 		WarView.goHome()
 	end)
-	local order = 10
+
+	-- right: rival nations
+	local right = Lib.inset({ Position = UDim2.fromOffset(316, 0), Size = UDim2.new(1, -316, 1, 0), Parent = win.body }, { Lib.pad(12) })
+	Lib.caption("Rival nations", { TextColor3 = C.Accent, Parent = right })
+	local list = Lib.scroll({ Name = "Nations", Position = UDim2.fromOffset(0, 22), Size = UDim2.new(1, 0, 1, -22), Parent = right }, { Lib.list("y", 8) })
+	local count = 0
 	for _, p in Players:GetPlayers() do
-		if p ~= player then
-			local idx = p:GetAttribute("PlotIndex") :: number?
-			if idx then
-				order += 1
-				local pvp = p:GetAttribute("Pvp") == true
-				entry(order, p.DisplayName .. "'s Nation", pvp and "PvP ON - can be attacked" or "PvP OFF - can't be attacked", pvp and "PVP ON" or "PVP OFF", pvp, function()
+		local idx = p:GetAttribute("PlotIndex") :: number?
+		if p ~= player and idx then
+			count += 1
+			local pvp = p:GetAttribute("Pvp") == true
+			local row = Lib.card({ Name = "Nation_" .. p.UserId, Size = UDim2.new(1, -8, 0, 64), LayoutOrder = pvp and count or 100 + count, Parent = list })
+			local flagBox = New("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(10, 12), Size = UDim2.fromOffset(60, 40), Parent = row }, { Lib.stroke(C.Line, 1, 0.3) })
+			Flag.draw(flagBox, p:GetAttribute("NationFlag") :: string?)
+			Lib.display({
+				Text = string.upper((p:GetAttribute("NationName") :: string?) or (p.DisplayName .. "'s nation")),
+				TextSize = 15,
+				Position = UDim2.fromOffset(82, 11),
+				Size = UDim2.new(1, -250, 0, 18),
+				Parent = row,
+			})
+			Lib.text({
+				Text = ("Cmdr %s  ·  %s  ·  Power %s"):format(p.DisplayName, (p:GetAttribute("RankName") :: string?) or "Outpost", Format.short((p:GetAttribute("Power") :: number?) or 0)),
+				TextSize = 12,
+				TextColor3 = C.Muted,
+				Position = UDim2.fromOffset(82, 32),
+				Size = UDim2.new(1, -250, 0, 16),
+				Parent = row,
+			})
+			Lib.chip(pvp and "PVP ON" or "PVP OFF", pvp and C.BadSoft or C.Inset, pvp and C.Bad or C.Muted, {
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -92, 0.5, 0),
+				Parent = row,
+			})
+			Lib.button({
+				Name = "View",
+				Variant = pvp and "danger" or "secondary",
+				Text = "VIEW",
+				AnchorPoint = Vector2.new(1, 0.5),
+				Position = UDim2.new(1, -10, 0.5, 0),
+				Size = UDim2.fromOffset(72, 34),
+				Parent = row,
+				Activated = function()
 					WarView.go(idx)
-				end)
-			end
+				end,
+			})
 		end
+	end
+	if count == 0 then
+		Lib.text({
+			Name = "Empty",
+			Text = "No other nations on this server yet. The mainland is still yours to take.",
+			TextWrapped = true,
+			TextColor3 = C.Muted,
+			Size = UDim2.new(1, -8, 0, 40),
+			Parent = list,
+		})
 	end
 end
 
@@ -651,54 +789,109 @@ end
 ---------------------------------------------------------------------------
 function WarView.init(screen: GuiObject)
 	labelParent = player:WaitForChild("PlayerGui")
+
+	-- strategic-view frame: vignette + screen brackets, drawn beneath the HUD
+	warOverlay = New("Frame", {
+		Name = "WarOverlay",
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		ZIndex = 0,
+		Visible = false,
+		Parent = screen,
+	})
+	for _, e in { { 0, 0, 1, 0, 90 }, { 0, 1, 1, 0, -90 }, { 0, 0, 0, 1, 0 }, { 1, 0, 0, 1, 180 } } do
+		local horizontal = e[3] == 1
+		New("Frame", {
+			BackgroundColor3 = Color3.fromRGB(4, 8, 6),
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(e[1], e[2]),
+			Position = UDim2.fromScale(e[1], e[2]),
+			Size = horizontal and UDim2.new(1, 0, 0, 140) or UDim2.new(0, 220, 1, 0),
+			ZIndex = 0,
+			Parent = warOverlay,
+		}, {
+			New("UIGradient", {
+				Rotation = e[5],
+				Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.35), NumberSequenceKeypoint.new(1, 1) }),
+			}),
+		})
+	end
+	local frameInset = New("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(8, 8), Size = UDim2.new(1, -16, 1, -16), ZIndex = 0, Parent = warOverlay })
+	Lib.brackets(frameInset, C.Accent, 34, 2, 0)
+
+	-- theater readout (takes the mission card's slot while in war mode)
+	local panel = Lib.panel({
+		Name = "Theater",
+		Position = UDim2.fromOffset(16, 104),
+		Size = UDim2.fromOffset(300, 104),
+		Parent = warOverlay,
+	}, { Lib.pad(10, 14) })
+	Lib.caption("Theater", { TextColor3 = C.Accent, Parent = panel })
+	readout.theater = Lib.display({ Name = "Name", Text = "MAINLAND", TextSize = 20, Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 24), Parent = panel })
+	readout.grid = Lib.text({ Name = "Grid", Text = "", FontFace = Theme.Font.Mono, TextSize = 12, TextColor3 = C.Muted, Position = UDim2.fromOffset(0, 44), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
+	readout.sel = Lib.display({ Name = "Selected", Text = "0 SELECTED", TextSize = 12, TextColor3 = C.Teal, Position = UDim2.fromOffset(0, 64), Size = UDim2.new(1, 0, 0, 16), Parent = panel })
+
 	hotbar = New("Frame", {
 		Name = "Hotbar",
 		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -96),
-		Size = UDim2.fromOffset(600, 66),
+		Position = UDim2.new(0.5, 0, 1, -112),
+		Size = UDim2.fromOffset(760, 90),
 		BackgroundTransparency = 1,
 		Visible = false,
 		Parent = screen,
 	}, { Lib.list("x", 6, Enum.HorizontalAlignment.Center) })
 
+	-- targeting reticle: brackets, crosshair ticks and a live target readout
 	reticle = New("Frame", {
 		Name = "Reticle",
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Size = UDim2.fromOffset(46, 46),
+		Size = UDim2.fromOffset(52, 52),
 		BackgroundTransparency = 1,
 		Visible = false,
 		Parent = screen,
 	})
-	for _, c in { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } } do
-		local corner = New("Frame", {
-			AnchorPoint = Vector2.new(c[1], c[2]),
-			Position = UDim2.fromScale(c[1], c[2]),
-			Size = UDim2.fromOffset(12, 12),
-			BackgroundTransparency = 1,
+	Lib.brackets(reticle, C.Accent, 13, 2, 0)
+	for _, t in { { 0.5, 0, 2, 9 }, { 0.5, 1, 2, 9 }, { 0, 0.5, 9, 2 }, { 1, 0.5, 9, 2 } } do
+		New("Frame", {
+			BackgroundColor3 = C.Accent,
+			BorderSizePixel = 0,
+			AnchorPoint = Vector2.new(t[1], t[2]),
+			Position = UDim2.new(t[1], t[1] == 0.5 and 0 or (t[1] == 0 and 13 or -13), t[2], t[2] == 0.5 and 0 or (t[2] == 0 and 13 or -13)),
+			Size = UDim2.fromOffset(t[3], t[4]),
 			Parent = reticle,
 		})
-		New("Frame", { BackgroundColor3 = RETICLE, BorderSizePixel = 0, Size = UDim2.fromOffset(12, 2), Position = UDim2.fromOffset(0, c[2] == 0 and 0 or 10), Parent = corner })
-		New("Frame", { BackgroundColor3 = RETICLE, BorderSizePixel = 0, Size = UDim2.fromOffset(2, 12), Position = UDim2.fromOffset(c[1] == 0 and 0 or 10, 0), Parent = corner })
 	end
-	New("Frame", { BackgroundColor3 = RETICLE, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(4, 4), Parent = reticle }, { Lib.round() })
+	New("Frame", { BackgroundColor3 = C.Accent, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(4, 4), Parent = reticle }, { Lib.round() })
+	targetLabel = Lib.display({
+		Name = "Target",
+		Text = "",
+		TextSize = 11,
+		TextColor3 = C.Accent,
+		TextStrokeTransparency = 0.4,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 1, 6),
+		Size = UDim2.fromOffset(240, 14),
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Parent = reticle,
+	})
 
 	selectBox = New("Frame", {
 		Name = "SelectBox",
-		BackgroundColor3 = Color3.fromRGB(90, 230, 130),
-		BackgroundTransparency = 0.85,
+		BackgroundColor3 = C.Teal,
+		BackgroundTransparency = 0.88,
 		Visible = false,
 		Parent = screen,
-	}, { Lib.stroke(Color3.fromRGB(90, 230, 130), 1) })
+	}, { Lib.stroke(C.Teal, 1, 0.1) })
 
-	hint = Lib.text({
+	hint = Lib.display({
 		Name = "Hint",
 		Text = "",
 		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -168),
-		Size = UDim2.fromOffset(700, 20),
-		TextColor3 = Color3.new(1, 1, 1),
-		TextStrokeTransparency = 0.5,
-		TextSize = Theme.TextSize.Small,
+		Position = UDim2.new(0.5, 0, 1, -210),
+		Size = UDim2.fromOffset(760, 18),
+		TextColor3 = C.TextSoft,
+		TextStrokeTransparency = 0.55,
+		TextSize = 13,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		Visible = false,
 		Parent = screen,
@@ -712,7 +905,7 @@ function WarView.init(screen: GuiObject)
 	blastRing.CanQuery = false
 	blastRing.CanTouch = false
 	blastRing.Material = Enum.Material.Neon
-	blastRing.Color = RETICLE
+	blastRing.Color = C.Accent
 	blastRing.Transparency = 0.72
 	blastRing.CastShadow = false
 
@@ -741,6 +934,9 @@ function WarView.init(screen: GuiObject)
 		elseif patch.inventory or patch.launchers then
 			WarView.refreshHotbar()
 		end
+	end)
+	ClientState.onMode(function(mode)
+		warOverlay.Visible = mode == "war"
 	end)
 	task.spawn(function()
 		while true do

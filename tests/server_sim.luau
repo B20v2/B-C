@@ -142,6 +142,7 @@ local services = {
 	ReplicatedStorage = ReplicatedStorage,
 	ServerScriptService = ServerScriptService,
 	Workspace = Workspace,
+	Lighting = place:FindFirstChildOfClass("Lighting"),
 	RunService = { IsStudio = function() return true end, IsServer = function() return true end, Heartbeat = Signal() },
 	HttpService = {
 		JSONEncode = function(_, v) return serde.encode("json", v) end,
@@ -182,7 +183,7 @@ local cache = {}
 local env = {
 	Instance = Instance, Vector3 = Vector3, Vector2 = roblox.Vector2, CFrame = CFrame, Color3 = roblox.Color3,
 	UDim2 = roblox.UDim2, UDim = roblox.UDim, Enum = Enum, Font = roblox.Font, NumberSequence = roblox.NumberSequence,
-	NumberSequenceKeypoint = roblox.NumberSequenceKeypoint, ColorSequence = roblox.ColorSequence, NumberRange = roblox.NumberRange,
+	NumberSequenceKeypoint = roblox.NumberSequenceKeypoint, ColorSequence = roblox.ColorSequence, ColorSequenceKeypoint = roblox.ColorSequenceKeypoint, NumberRange = roblox.NumberRange,
 	game = game, workspace = Workspace, task = fakeTask, typeof = typeof,
 	warn = function(...) errors += 1 print("WARN:", ...) end,
 	os = { clock = function() return fakeClock end, time = os.time, date = os.date },
@@ -426,6 +427,32 @@ local Products = load(ReplicatedStorage.Shared.Catalog.Products)
 local ps = place:GetDescendants()
 local cash2 = nA.data.Cash
 
+print("== nation identity + rank")
+check(nA.data.Nation == nil and invokers.GetSnapshot(A).nation == false, "new nation unfounded")
+check(string.find(call("SetNation", A, "ab", "1,4,1,3,1").err or "", "characters") ~= nil, "name too short rejected")
+check(string.find(call("SetNation", A, "Bad<Name>", "1,4,1,3,1").err or "", "letters") ~= nil, "bad characters rejected")
+local resN = call("SetNation", A, "  Iron   Republic ", "3,5,1,6,4")
+check(resN.ok and resN.name == "Iron Republic", "nation founded (trimmed)")
+check(A:GetAttribute("NationName") == "Iron Republic" and A:GetAttribute("NationFlag") == "3,5,1,6,4", "identity attributes")
+local plotA = Workspace:FindFirstChild("Homeland"):FindFirstChild("Plot_" .. nA.plotIndex)
+local signGui = plotA:FindFirstChild("SignBoard"):FindFirstChildOfClass("SurfaceGui")
+check(signGui:FindFirstChild("Title").Text == "IRON REPUBLIC", "plot sign renamed")
+local cloth = plotA:FindFirstChild("FlagCloth")
+check(cloth.Transparency == 0 and cloth:FindFirstChild("FlagFront"):FindFirstChild("Flag") ~= nil, "flag raised on pole")
+check(call("SetNation", A, "Iron Republic", { p = 99, c = { -1, 500, 2 }, e = 77 }).ok, "garbage flag sanitized")
+local snapN = invokers.GetSnapshot(A)
+check(snapN.nation and snapN.nation.name == "Iron Republic", "nation in snapshot")
+check(snapN.rank and snapN.rank.power > 0 and snapN.rank.name ~= nil, "rank in snapshot")
+local cashBefore = nA.data.Cash
+nA.data.RankLevel = 1
+nA.data.Population += 3000
+advance(1)
+check(nA.data.RankLevel >= 3 and nA.data.Cash >= cashBefore + 40000, "rank-up rewards paid once")
+local cashAfter = nA.data.Cash
+advance(1)
+check(nA.data.Cash - cashAfter < 40000, "rank rewards not repeated")
+check(A:GetAttribute("Power") == nA.stats.rank.power and A:GetAttribute("RankName") == nA.stats.rank.name, "power attributes")
+
 print("== snapshot")
 local snap = invokers.GetSnapshot(A)
 check(snap and snap.cash ~= nil and snap.quest ~= nil, "snapshot")
@@ -455,6 +482,7 @@ check(count2 == buildingCount, ("buildings restored %d/%d"):format(count2, build
 check(S.UnitService.count(nA2) == unitCount, "units restored")
 check(nA2.data.Inventory.SRBM == inv, "inventory restored")
 check(nA2.passes.DoubleCash == true, "studio pass restored")
+check(nA2.data.Nation and nA2.data.Nation.Name == "Iron Republic" and A2:GetAttribute("NationName") == "Iron Republic", "nation identity restored")
 
 print(("\n%d failures, %d server warnings"):format(failures, errors))
 process.exit(failures == 0 and errors == 0 and 0 or 1)

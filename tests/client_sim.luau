@@ -210,6 +210,7 @@ local services = {
 	ReplicatedStorage = ReplicatedStorage,
 	ServerScriptService = ServerScriptService,
 	Workspace = Workspace,
+	Lighting = place:FindFirstChildOfClass("Lighting"),
 	RunService = { IsStudio = function() return true end, IsServer = function() return true end, Heartbeat = Signal() },
 	HttpService = {
 		JSONEncode = function(_, v) return serde.encode("json", v) end,
@@ -250,7 +251,7 @@ local cache = {}
 local env = {
 	Instance = Instance, Vector3 = Vector3, Vector2 = roblox.Vector2, CFrame = CFrame, Color3 = roblox.Color3,
 	UDim2 = roblox.UDim2, UDim = roblox.UDim, Enum = Enum, Font = roblox.Font, NumberSequence = roblox.NumberSequence,
-	NumberSequenceKeypoint = roblox.NumberSequenceKeypoint, ColorSequence = roblox.ColorSequence, NumberRange = roblox.NumberRange,
+	NumberSequenceKeypoint = roblox.NumberSequenceKeypoint, ColorSequence = roblox.ColorSequence, ColorSequenceKeypoint = roblox.ColorSequenceKeypoint, NumberRange = roblox.NumberRange,
 	game = game, workspace = Workspace, task = fakeTask, typeof = typeof,
 	TweenInfo = { new = function(...) return { ... } end },
 	RaycastParams = { new = function() return {} end },
@@ -445,8 +446,43 @@ advance(2)
 frame()
 
 print("    billboard runtime", nA.buildings[placed.billboard], nA.buildings[placed.billboard] and nA.buildings[placed.billboard].model)
+print("== nation founding")
+check(ClientState.get("nation") == false, "unfounded nation in state")
+guarded("openNation", Hub.openNation)
+local Modal = req("Controllers.Modal")
+local nationWin = Modal.current()
+local function clickIn(root, match)
+	for _, d in root:GetDescendants() do
+		if d:IsA("TextButton") and (d.Name == match or d.Text == match) then
+			guarded("click " .. match, function() d.Activated:Fire() end)
+			stdtask.wait()
+			return
+		end
+	end
+	CLIENT_ERR("click", "no button " .. match .. " in window")
+end
+check(nationWin ~= nil, "nation window open")
+local nameBox = nationWin and nationWin.root:FindFirstChild("NameBox", true)
+check(nameBox ~= nil and #nameBox.Text >= 3, "random name suggested")
+for _, b in { "Randomize", "Cross", "Band2", "Color6", "Star" } do
+	clickIn(nationWin.root, b)
+end
+nameBox.Text = "Test Dominion"
+clickIn(nationWin.root, "Found")
+check(nA.data.Nation and nA.data.Nation.Name == "Test Dominion", "nation founded from UI (" .. tostring(nA.data.Nation and nA.data.Nation.Name) .. ")")
+check(string.match(nA.data.Nation.Flag, "^3,%d+,6,%d+,3$") ~= nil, "flag designed in UI (" .. nA.data.Nation.Flag .. ")")
+advance(1)
+frame()
+local badgeName
+for _, d in playerGui:GetDescendants() do
+	if d:IsA("TextLabel") and d.Text == "TEST DOMINION" then badgeName = d end
+end
+check(badgeName ~= nil, "HUD badge shows nation name")
+guarded("rankUp", Hub.showRankUp, 2)
+frame()
+
 print("== HUD + build menu")
-click("BuildButton")
+click("Build")
 check(ClientState.mode == "build", "build mode")
 click("Military")
 click("Missiles")
@@ -459,9 +495,9 @@ click("Roads")
 click("road")
 frame()
 guarded("rotate", function() req("Controllers.Placement").rotate() end)
-click("Delete")
-click("Move")
-click("Undo")
+click("DEMOLISH")
+click("MOVE")
+click("UNDO")
 frame()
 click("Close")
 
@@ -494,6 +530,28 @@ guarded("welcome", Hub.showWelcome, 12345, 3600)
 stdtask.wait(0.1)
 guarded("travel", Hub.openTravel)
 frame()
+
+guarded("travel mainland", function() click("Mainland") end)
+check(ClientState.mode == "war", "theater select opens war map")
+guarded("goHome0", Hub.goHome)
+
+print("== night lights")
+local NightLights = req("Controllers.NightLights")
+guarded("night", NightLights.set, true)
+local litCount, neonCount = 0, 0
+for _, d in Workspace:FindFirstChild("Homeland"):GetDescendants() do
+	if d:IsA("BasePart") and d:GetAttribute("Window") then
+		litCount += 1
+		if d.Material == Enum.Material.Neon then neonCount += 1 end
+	end
+end
+check(litCount > 0 and neonCount > 0 and neonCount < litCount, ("windows light up at night (%d/%d)"):format(neonCount, litCount))
+guarded("day", NightLights.set, false)
+local stillNeon = 0
+for _, d in Workspace:FindFirstChild("Homeland"):GetDescendants() do
+	if d:IsA("BasePart") and d:GetAttribute("Window") and d.Material == Enum.Material.Neon then stillNeon += 1 end
+end
+check(stillNeon == 0, "windows restored at dawn")
 
 print("== war view")
 nA.data.Inventory.SRBM = 5

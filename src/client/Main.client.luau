@@ -74,6 +74,9 @@ local Animator = require(Controllers.Animator)
 local ShopUI = require(Controllers.ShopUI)
 local RewardsUI = require(Controllers.RewardsUI)
 local ArmyUI = require(Controllers.ArmyUI)
+local Minimap = require(Controllers.Minimap)
+local NationUI = require(Controllers.NationUI)
+local NightLights = require(Controllers.NightLights)
 
 Lib.setClickSound(Sounds.get("Click"))
 
@@ -91,6 +94,9 @@ Animator.init()
 ShopUI.init()
 RewardsUI.init()
 ArmyUI.init()
+Minimap.init(hudLayer)
+NationUI.init(toastLayer)
+NightLights.init()
 
 ClientState.start()
 

@@ -335,6 +335,8 @@ function Effects.init()
 			Hub.call("showWelcome", b, c)
 		elseif kind == "ResearchDone" then
 			Sounds.play("Success")
+		elseif kind == "RankUp" then
+			Hub.call("showRankUp", a)
 		end
 	end)
 	Hub.moveMarker = moveMarker

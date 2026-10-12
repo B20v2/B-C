@@ -1,9 +1,10 @@
 --[[
-	BuildMenu
-	The bottom build bar:
-	  [Civilian/Military rail] [tabs, breadcrumb, faction toggle, item cards]
-	  [tools: Delete 2, Undo 3, Drag 4, Move 5, Rotate 6, close X + selected detail]
-	plus the hover tooltip ("SRBM Launcher $12000 · LMB place · R turn").
+	BuildMenu - the build drawer
+	  [ department: CIVIL / MILITARY ]
+	  [ tabs · faction toggle / structure cards with 3D previews ]
+	  [ detail: spinning preview, cost, stats / tools: DEMOLISH 2, UNDO 3,
+	    DRAG 4, MOVE 5, ROTATE 6, CLOSE ]
+	plus the placement hint bar above the drawer.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -29,6 +30,7 @@ local Notifications = require(script.Parent.Notifications)
 local Sounds = require(script.Parent.Sounds)
 
 local New = Lib.New
+local C = Theme.Color
 
 local BuildMenu = {}
 
@@ -38,10 +40,13 @@ local category = "Civilian"
 local tab = "Housing"
 local faction = "Standard"
 local refs: { [string]: any } = {}
-local cards: { [string]: { btn: TextButton, lock: Frame, price: Frame, def: any } } = {}
+local cards: { [string]: { btn: TextButton, lock: Frame, price: TextLabel, def: any } } = {}
 local thumbs: { [string]: Model } = {}
+local lastDetail: string? = nil
 
-local W, H = 1480, 218
+local W, H = 1520, 250
+local LEFT = 150
+local RIGHT = 410
 
 local function access(): Unlocks.Access
 	return {
@@ -69,11 +74,11 @@ function BuildMenu.describe(def): string
 				break
 			end
 		end
-		return ("Requires 1 %s per launch | max %d shared · %ds reload"):format(def.launcher, w and w.stockCap or 60, def.reload or 20)
+		return ("Fires %s · stock max %d · %ds reload"):format(def.launcher, w and w.stockCap or 60, def.reload or 20)
 	end
 	if def.airDefense then
 		local ad = def.airDefense
-		return ("Range %d · %d%% hit chance · %ds reload"):format(ad.range, math.floor(ad.chance * 100), ad.reload)
+		return ("Range %d · %d%% intercept · %ds reload"):format(ad.range, math.floor(ad.chance * 100), ad.reload)
 	end
 	if def.housing then
 		table.insert(bits, ("+%d residents"):format(def.housing))
@@ -94,22 +99,22 @@ function BuildMenu.describe(def): string
 		table.insert(bits, ("%d fuel/min"):format(def.refine.rate))
 	end
 	if def.factory then
-		table.insert(bits, "Builds weapons & vehicles")
+		table.insert(bits, "builds weapons & vehicles")
 	end
 	if def.rpOut then
 		table.insert(bits, ("+%d RP/min"):format(def.rpOut))
 	end
 	if def.income then
-		table.insert(bits, ("+$%s per pay"):format(Format.commas(def.income)))
+		table.insert(bits, ("+$%s / pay"):format(Format.commas(def.income)))
 	end
 	if def.service then
-		table.insert(bits, ("Serves %s"):format(Format.short(def.service.serves)))
+		table.insert(bits, ("serves %s"):format(Format.short(def.service.serves)))
 	end
 	if def.storage then
 		table.insert(bits, ("+%s storage"):format(Format.short((def.storage.oil or 0) + (def.storage.steel or 0))))
 	end
 	if def.depot then
-		table.insert(bits, ("+%d army size"):format(def.depot))
+		table.insert(bits, ("+%d army"):format(def.depot))
 	end
 	if def.workers then
 		table.insert(bits, ("%d workers"):format(def.workers))
@@ -127,22 +132,16 @@ local function lockReason(def): (boolean, string?)
 	return Unlocks.check(def, access())
 end
 
-local function tinyLock(color: Color3): Frame
-	local f = New("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(10, 12) })
-	New("Frame", {
-		BackgroundColor3 = color,
-		Position = UDim2.fromOffset(0, 5),
-		Size = UDim2.fromOffset(10, 7),
-		Parent = f,
-	}, { Lib.corner(2) })
-	local shackle = New("Frame", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(2, 0),
-		Size = UDim2.fromOffset(6, 8),
-		Parent = f,
-	}, { Lib.round() })
-	Lib.stroke(color, 1.5).Parent = shackle
-	return f
+local function lockText(def): string
+	if def.pass and not (access().passes[def.pass]) then
+		local p = Products.pass(def.pass)
+		return "PASS · " .. string.upper(p and p.name or def.pass)
+	end
+	if def.research then
+		local r = Research.get(def.research)
+		return "RESEARCH · " .. string.upper(r and r.name or def.research)
+	end
+	return "LOCKED"
 end
 
 ---------------------------------------------------------------------------
@@ -155,19 +154,18 @@ local function updateCard(entry)
 	local state = Placement.state()
 	local isSel = state.def ~= nil and state.def.id == def.id
 	local stroke = entry.btn:FindFirstChildOfClass("UIStroke") :: UIStroke
-	stroke.Color = isSel and Theme.Color.Teal or Theme.Color.CardStroke
+	stroke.Color = isSel and C.Accent or C.LineSoft
 	stroke.Thickness = isSel and 2 or 1
-	Lib.setButtonColor(entry.btn, isSel and Theme.Color.AccentSoft or Theme.Color.Card)
+	Lib.setButtonColor(entry.btn, isSel and C.AccentSoft or C.Raised)
 	local afford = (ClientState.get("cash") or 0) >= def.cost
-	local label = entry.price:FindFirstChild("Label") :: TextLabel
-	label.TextColor3 = afford and Theme.Color.Good or Theme.Color.Bad
+	entry.price.TextColor3 = afford and C.Good or C.Bad
 end
 
 local function makeCard(def, order: number): TextButton
 	local btn = Lib.button({
 		Name = def.id,
-		Size = UDim2.fromOffset(150, 118),
-		BackgroundColor3 = Theme.Color.Card,
+		Size = UDim2.fromOffset(150, 166),
+		BackgroundColor3 = C.Raised,
 		LayoutOrder = order,
 		Activated = function()
 			local ok, reason = lockReason(def)
@@ -187,62 +185,75 @@ local function makeCard(def, order: number): TextButton
 				Placement.select(def)
 			end
 		end,
-	}, { Lib.corner(Theme.Radius.Card), Lib.stroke(Theme.Color.CardStroke) })
-	local art = New("Frame", {
-		BackgroundColor3 = Theme.Color.CivilSoft,
-		Position = UDim2.fromOffset(6, 6),
-		Size = UDim2.new(1, -12, 0, 62),
-		Parent = btn,
-	}, { Lib.corner(6) })
-	art.BackgroundColor3 = category == "Military" and Color3.fromRGB(232, 238, 246) or Theme.Color.CivilSoft
+	}, { Lib.corner(4), Lib.stroke(C.LineSoft) })
+	local art = Lib.inset({ Position = UDim2.fromOffset(5, 5), Size = UDim2.new(1, -10, 0, 96), Parent = btn })
+	New("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(36, 46, 40), Color3.fromRGB(14, 18, 16)), Rotation = 90, Parent = art })
 	Lib.viewport(thumbModel(def), { Parent = art }, 40)
 	local lock = New("Frame", {
 		Name = "Lock",
-		BackgroundColor3 = Color3.new(1, 1, 1),
-		Position = UDim2.fromOffset(10, 10),
-		Size = UDim2.fromOffset(52, 18),
+		BackgroundColor3 = C.Ink,
+		BackgroundTransparency = 0.25,
+		Size = UDim2.fromScale(1, 1),
 		Visible = false,
-		Parent = btn,
-	}, {
-		Lib.corner(4),
-		Lib.text({
-			Text = "Locked",
-			TextColor3 = Theme.Color.Bad,
-			TextSize = Theme.TextSize.Tiny,
-			FontFace = Theme.Font.Bold,
-			Size = UDim2.fromScale(1, 1),
-			TextXAlignment = Enum.TextXAlignment.Center,
-		}),
+		ZIndex = 3,
+		Parent = art,
+	}, { Lib.corner(4) })
+	local lk = Icons.get("shield", 18, C.Accent)
+	lk.AnchorPoint = Vector2.new(0.5, 0)
+	lk.Position = UDim2.new(0.5, 0, 0, 22)
+	lk.Parent = lock
+	for _, d in lk:GetDescendants() do
+		if d:IsA("GuiObject") then
+			d.ZIndex = 4
+		end
+	end
+	Lib.display({
+		Text = lockText(def),
+		TextSize = 10,
+		TextColor3 = C.Accent,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Position = UDim2.fromOffset(6, 46),
+		Size = UDim2.new(1, -12, 0, 30),
+		ZIndex = 4,
+		Parent = lock,
 	})
 	Lib.text({
 		Text = def.name,
-		FontFace = Theme.Font.Bold,
-		TextSize = Theme.TextSize.Small,
-		Position = UDim2.fromOffset(10, 70),
+		FontFace = Theme.Font.BodyHeavy,
+		TextSize = 13,
+		Position = UDim2.fromOffset(9, 106),
 		Size = UDim2.new(1, -16, 0, 18),
 		Parent = btn,
 	})
-	local chips = New("Frame", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(10, 90),
-		Size = UDim2.new(1, -16, 0, 22),
+	local price = Lib.display({
+		Text = "$" .. Format.commas(def.cost),
+		TextSize = 15,
+		TextColor3 = C.Good,
+		Position = UDim2.fromOffset(9, 128),
+		Size = UDim2.new(1, -16, 0, 18),
 		Parent = btn,
-	}, { Lib.list("x", 6) })
-	local price = Lib.chip("$" .. Format.commas(def.cost), Theme.Color.GoodSoft, Theme.Color.Good, { LayoutOrder = 1 })
-	price.Parent = chips
+	})
 	if def.buildTime > 0 then
-		Lib.chip(Format.duration(def.buildTime), Theme.Color.TimeSoft, Theme.Color.Time, { LayoutOrder = 2 }).Parent = chips
+		Lib.chip(Format.duration(def.buildTime), C.InfoSoft, C.Info, {
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, -8, 0, 128),
+			Size = UDim2.fromOffset(0, 18),
+			Parent = btn,
+		})
 	end
 	cards[def.id] = { btn = btn, lock = lock, price = price, def = def }
 	updateCard(cards[def.id])
 	btn.MouseEnter:Connect(function()
 		refs.hoverDef = def
 		BuildMenu.refreshTooltip()
+		BuildMenu.refreshDetail()
 	end)
 	btn.MouseLeave:Connect(function()
 		if refs.hoverDef == def then
 			refs.hoverDef = nil
 			BuildMenu.refreshTooltip()
+			BuildMenu.refreshDetail()
 		end
 	end)
 	return btn
@@ -257,15 +268,7 @@ local function renderCards()
 	for i, def in list do
 		makeCard(def, i).Parent = refs.scroller
 	end
-	refs.crumb.Text = ("%s / %s (%d)"):format(category, tab, #list)
-	if #list == 0 then
-		Lib.text({
-			Text = "Nothing here yet.",
-			TextColor3 = Theme.Color.Muted,
-			Size = UDim2.fromOffset(300, 40),
-			Parent = refs.scroller,
-		})
-	end
+	refs.crumb.Text = ("%s  /  %s  ·  %d STRUCTURES"):format(string.upper(category == "Civilian" and "Civil" or category), string.upper(tab), #list)
 end
 
 ---------------------------------------------------------------------------
@@ -277,12 +280,14 @@ local function renderTabs()
 		if c.id == category then
 			for i, t in c.tabs do
 				local active = t == tab
-				Lib.button({
-					Text = t,
-					FontFace = Theme.Font.Semi,
-					TextSize = Theme.TextSize.Small,
-					BackgroundColor3 = active and Theme.Color.TabActive or Theme.Color.Tab,
-					Size = UDim2.fromOffset(98, 32),
+				local b = Lib.button({
+					Name = t,
+					Text = string.upper(t),
+					FontFace = Theme.Font.Display,
+					TextSize = 14,
+					TextColor3 = active and C.Accent or C.Muted,
+					BackgroundTransparency = 1,
+					Size = UDim2.fromOffset(112, 32),
 					LayoutOrder = i,
 					Parent = refs.tabs,
 					Activated = function()
@@ -292,14 +297,21 @@ local function renderTabs()
 						BuildMenu.renderFactions()
 						renderCards()
 					end,
-				}, { Lib.corner(6), active and Lib.stroke(Theme.Color.Teal, 1, 0.4) or nil })
+				})
+				if active then
+					New("Frame", { BackgroundColor3 = C.Accent, BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 0), Size = UDim2.new(0.7, 0, 0, 2), Parent = b })
+				end
 			end
 		end
 	end
 	for _, c in Buildings.Categories do
 		local tile = refs["cat_" .. c.id] :: TextButton
 		local active = c.id == category
-		Lib.setButtonColor(tile, active and (c.id == "Civilian" and Theme.Color.CivilSoft or Theme.Color.MilitarySoft) or Theme.Color.Card)
+		local tint = c.id == "Civilian" and C.Civil or C.Military
+		Lib.setButtonColor(tile, active and (c.id == "Civilian" and C.InfoSoft or C.BadSoft) or C.Raised)
+		local stroke = tile:FindFirstChildOfClass("UIStroke") :: UIStroke
+		stroke.Color = active and tint or C.LineSoft
+		stroke.Thickness = active and 2 or 1
 	end
 end
 
@@ -312,14 +324,14 @@ function BuildMenu.renderFactions()
 		local active = f == faction
 		local btn = Lib.button({
 			Name = f,
-			Size = UDim2.fromOffset(86, 26),
-			BackgroundColor3 = active and Theme.Color.Card or Theme.Color.CardAlt,
+			Size = UDim2.fromOffset(96, 26),
+			BackgroundColor3 = active and C.AccentSoft or C.Inset,
 			LayoutOrder = i,
 			Parent = refs.factions,
 			Activated = function()
 				if locked and passKey then
 					local p = Products.pass(passKey)
-					Notifications.show(("%s requires the %s"):format(f, p and p.name or "pack"), "info")
+					Notifications.show(("%s arsenal requires the %s"):format(f, p and p.name or "pack"), "info")
 					Hub.call("openShop", "Passes")
 					return
 				end
@@ -327,22 +339,15 @@ function BuildMenu.renderFactions()
 				BuildMenu.renderFactions()
 				renderCards()
 			end,
-		}, { Lib.corner(5), Lib.list("x", 5, Enum.HorizontalAlignment.Center, Enum.VerticalAlignment.Center) })
-		Lib.text({
-			Text = f,
-			TextSize = Theme.TextSize.Small,
-			FontFace = active and Theme.Font.Bold or Theme.Font.Semi,
-			TextColor3 = active and Theme.Color.Text or Theme.Color.Muted,
-			AutomaticSize = Enum.AutomaticSize.X,
-			Size = UDim2.new(0, 0, 1, 0),
-			LayoutOrder = 1,
+		}, { Lib.corner(3), Lib.stroke(active and C.Accent or C.LineSoft, 1, active and 0.2 or 0) })
+		Lib.display({
+			Text = string.upper(f) .. (locked and "  ◆" or ""),
+			TextSize = 11,
+			TextColor3 = active and C.Accent or (locked and C.Faint or C.TextSoft),
+			TextXAlignment = Enum.TextXAlignment.Center,
+			Size = UDim2.fromScale(1, 1),
 			Parent = btn,
 		})
-		if locked then
-			local l = tinyLock(Theme.Color.Amber)
-			l.LayoutOrder = 2
-			l.Parent = btn
-		end
 	end
 end
 
@@ -360,163 +365,150 @@ local function setCategory(c: string)
 end
 
 ---------------------------------------------------------------------------
--- Right panel
+-- Detail + tools
 ---------------------------------------------------------------------------
-local function toolButton(parent: Instance, label: string, key: string, icon: string?, order: number, onClick: () -> ()): TextButton
+local function toolButton(parent: Instance, label: string, key: string, icon: string, order: number, onClick: () -> ()): TextButton
 	local btn = Lib.button({
 		Name = label,
-		Size = UDim2.fromOffset(92, 30),
-		BackgroundColor3 = Theme.Color.Card,
+		Size = UDim2.fromOffset(62, 50),
+		BackgroundColor3 = C.Raised,
 		LayoutOrder = order,
 		Parent = parent,
 		Activated = onClick,
-	}, { Lib.corner(6), Lib.stroke(Theme.Color.CardStroke) })
-	local x = 8
-	if icon then
-		local ic = Icons.get(icon, 14, Theme.Color.Text)
-		ic.Position = UDim2.fromOffset(7, 8)
-		ic.Parent = btn
-		x = 26
-	end
-	Lib.text({
-		Text = label,
-		TextSize = Theme.TextSize.Small,
-		FontFace = Theme.Font.Semi,
-		Position = UDim2.fromOffset(x, 0),
-		Size = UDim2.new(1, -x - 18, 1, 0),
-		Parent = btn,
-	})
+	}, { Lib.corner(4), Lib.stroke(C.LineSoft) })
+	local ic = Icons.get(icon, 16, C.Text)
+	ic.AnchorPoint = Vector2.new(0.5, 0)
+	ic.Position = UDim2.new(0.5, 0, 0, 8)
+	ic.Parent = btn
+	Lib.display({ Text = label, TextSize = 10, TextColor3 = C.TextSoft, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.new(0, 0, 1, -18), Size = UDim2.new(1, 0, 0, 14), Parent = btn })
 	if key ~= "" then
-		Lib.text({
-			Text = key,
-			TextSize = Theme.TextSize.Tiny,
-			TextColor3 = Theme.Color.Muted,
-			AnchorPoint = Vector2.new(1, 0),
-			Position = UDim2.new(1, -8, 0, 0),
-			Size = UDim2.new(0, 12, 1, 0),
-			TextXAlignment = Enum.TextXAlignment.Right,
-			Parent = btn,
-		})
+		Lib.text({ Text = key, FontFace = Theme.Font.Mono, TextSize = 9, TextColor3 = C.Faint, Position = UDim2.fromOffset(4, 2), Size = UDim2.fromOffset(10, 10), Parent = btn })
 	end
 	return btn
 end
 
 local function buildRight(parent: Frame)
+	local view = Lib.inset({ Position = UDim2.fromOffset(10, 10), Size = UDim2.fromOffset(166, 150), Parent = parent })
+	New("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(38, 50, 42), Color3.fromRGB(12, 16, 14)), Rotation = 90, Parent = view })
+	refs.detailView = view
+	refs.detailName = Lib.display({ Text = "SELECT A STRUCTURE", TextSize = 17, TextWrapped = true, Position = UDim2.fromOffset(188, 10), Size = UDim2.new(1, -198, 0, 40), TextYAlignment = Enum.TextYAlignment.Top, Parent = parent })
+	refs.detailPrice = Lib.display({ Text = "", TextSize = 20, TextColor3 = C.Good, Position = UDim2.fromOffset(188, 52), Size = UDim2.new(1, -198, 0, 22), Parent = parent })
+	refs.detailTime = Lib.text({ Text = "", FontFace = Theme.Font.BodyBold, TextSize = 12, TextColor3 = C.Info, Position = UDim2.fromOffset(188, 76), Size = UDim2.new(1, -198, 0, 16), Parent = parent })
+	refs.detailReq = Lib.text({
+		Text = "Pick something from the list to place it on your land.",
+		TextSize = 12,
+		TextColor3 = C.TextSoft,
+		TextWrapped = true,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		Position = UDim2.fromOffset(188, 96),
+		Size = UDim2.new(1, -198, 0, 64),
+		Parent = parent,
+	})
 	local tools = New("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(8, 8),
-		Size = UDim2.new(1, -16, 0, 68),
+		Position = UDim2.new(0, 10, 1, -60),
+		Size = UDim2.new(1, -20, 0, 50),
 		Parent = parent,
-	}, { Lib.grid(UDim2.fromOffset(92, 30), 6) })
-	refs.toolDelete = toolButton(tools, "Delete", "2", "trash", 1, function()
+	}, { Lib.list("x", 5) })
+	refs.toolDelete = toolButton(tools, "DEMOLISH", "2", "trash", 1, function()
 		Placement.setTool("delete")
 	end)
-	refs.toolUndo = toolButton(tools, "Undo", "3", "undo", 2, function()
+	refs.toolUndo = toolButton(tools, "UNDO", "3", "undo", 2, function()
 		Placement.undo()
 	end)
-	refs.toolDrag = toolButton(tools, "Drag", "4", nil, 3, function()
+	refs.toolDrag = toolButton(tools, "DRAG", "4", "beam", 3, function()
 		Placement.toggleDrag()
 	end)
-	refs.toolMove = toolButton(tools, "Move", "5", nil, 4, function()
+	refs.toolMove = toolButton(tools, "MOVE", "5", "map", 4, function()
 		Placement.setTool("move")
 	end)
-	refs.toolRotate = toolButton(tools, "Rotate", "6", nil, 5, function()
+	refs.toolRotate = toolButton(tools, "ROTATE", "6", "undo", 5, function()
 		Placement.rotate()
 	end)
 	local close = Lib.button({
 		Name = "Close",
-		Size = UDim2.fromOffset(30, 30),
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -8, 0, 8),
-		BackgroundColor3 = Theme.Color.Card,
-		Parent = parent,
+		Variant = "danger",
+		Size = UDim2.fromOffset(62, 50),
+		LayoutOrder = 6,
+		Parent = tools,
 		Activated = function()
 			BuildMenu.close()
 		end,
-	}, { Lib.corner(6), Lib.stroke(Theme.Color.CardStroke) })
-	local x = Icons.close(12, Theme.Color.Text)
-	x.AnchorPoint = Vector2.new(0.5, 0.5)
-	x.Position = UDim2.fromScale(0.5, 0.5)
-	x.Parent = close
-	tools.Size = UDim2.new(1, -54, 0, 68)
-
-	local detail = Lib.card({
-		Position = UDim2.fromOffset(8, 82),
-		Size = UDim2.new(1, -16, 0, 76),
-		Parent = parent,
 	})
-	local art = New("Frame", {
-		BackgroundColor3 = Theme.Color.CivilSoft,
-		Position = UDim2.fromOffset(6, 6),
-		Size = UDim2.fromOffset(70, 64),
-		Parent = detail,
-	}, { Lib.corner(6) })
-	refs.detailArt = art
-	refs.detailName = Lib.text({ Text = "Nothing selected", FontFace = Theme.Font.Bold, TextSize = Theme.TextSize.Small, Position = UDim2.fromOffset(84, 6), Size = UDim2.new(1, -170, 0, 18), Parent = detail })
-	refs.detailPrice = Lib.text({ Text = "", FontFace = Theme.Font.Bold, TextSize = Theme.TextSize.Small, TextColor3 = Theme.Color.Good, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 6), Size = UDim2.fromOffset(80, 18), TextXAlignment = Enum.TextXAlignment.Right, Parent = detail })
-	refs.detailReq = Lib.text({ Text = "Pick something to build", TextSize = Theme.TextSize.Tiny, TextColor3 = Theme.Color.Time, Position = UDim2.fromOffset(84, 26), Size = UDim2.new(1, -92, 0, 28), TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, Parent = detail })
-	refs.detailTime = Lib.text({ Text = "", TextSize = Theme.TextSize.Tiny, TextColor3 = Theme.Color.Muted, Position = UDim2.fromOffset(84, 54), Size = UDim2.new(1, -92, 0, 16), Parent = detail })
+	local x = Icons.close(14, C.Bad)
+	x.AnchorPoint = Vector2.new(0.5, 0)
+	x.Position = UDim2.new(0.5, 0, 0, 9)
+	x.Parent = close
+	Lib.display({ Text = "CLOSE", TextSize = 10, TextColor3 = C.Bad, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.new(0, 0, 1, -18), Size = UDim2.new(1, 0, 0, 14), Parent = close })
+end
 
-	local footer = New("Frame", {
-		BackgroundColor3 = Theme.Color.CardAlt,
-		Position = UDim2.fromOffset(8, 166),
-		Size = UDim2.new(1, -16, 0, 26),
-		Parent = parent,
-	}, { Lib.corner(6) })
-	refs.selectedLabel = Lib.text({ Text = "Selected: none", TextSize = Theme.TextSize.Tiny, TextColor3 = Theme.Color.TextSoft, Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -20, 1, 0), Parent = footer })
+function BuildMenu.refreshDetail()
+	local s = Placement.state()
+	local def = refs.hoverDef or s.def
+	local key = def and def.id or (s.tool or "none")
+	if key ~= lastDetail then
+		lastDetail = key
+		Lib.clear(refs.detailView)
+		if def then
+			Lib.viewport(thumbModel(def), { Parent = refs.detailView }, 30, 24)
+		else
+			local ic = Icons.get(s.tool == "delete" and "trash" or (s.tool == "move" and "map" or "hammer"), 44, C.Faint)
+			ic.AnchorPoint = Vector2.new(0.5, 0.5)
+			ic.Position = UDim2.fromScale(0.5, 0.5)
+			ic.Parent = refs.detailView
+		end
+	end
+	if def then
+		refs.detailName.Text = string.upper(def.name)
+		refs.detailPrice.Text = "$" .. Format.commas(def.cost)
+		refs.detailPrice.TextColor3 = (ClientState.get("cash") or 0) >= def.cost and C.Good or C.Bad
+		refs.detailTime.Text = (def.buildTime > 0 and ("BUILDS IN " .. string.upper(Format.duration(def.buildTime))) or "BUILDS INSTANTLY")
+			.. ("  ·  %dx%d"):format(def.size[1], def.size[2])
+		local ok = lockReason(def)
+		refs.detailReq.Text = (ok and "" or (lockText(def) .. "\n")) .. BuildMenu.describe(def)
+	else
+		refs.detailName.Text = s.tool == "delete" and "DEMOLISH" or (s.tool == "move" and "MOVE" or "SELECT A STRUCTURE")
+		refs.detailPrice.Text = ""
+		refs.detailTime.Text = ""
+		refs.detailReq.Text = s.tool == "delete" and "Click a building to remove it. 50% refund (100% while it's still under construction)."
+			or (s.tool == "move" and "Click a building, then click its new spot. R rotates it." or "Pick something from the list to place it on your land.")
+	end
 end
 
 local function refreshTools()
 	local s = Placement.state()
 	local function mark(btn: TextButton, on: boolean)
-		Lib.setButtonColor(btn, on and Theme.Color.TabActive or Theme.Color.Card)
+		Lib.setButtonColor(btn, on and C.AccentSoft or C.Raised)
+		local stroke = btn:FindFirstChildOfClass("UIStroke") :: UIStroke
+		stroke.Color = on and C.Accent or C.LineSoft
 	end
 	mark(refs.toolDelete, s.tool == "delete")
 	mark(refs.toolMove, s.tool == "move")
 	mark(refs.toolDrag, s.drag)
-	local def = s.def
-	Lib.clear(refs.detailArt)
-	if def then
-		Lib.viewport(thumbModel(def), { Parent = refs.detailArt }, 40)
-		refs.detailName.Text = def.name
-		refs.detailPrice.Text = "$" .. Format.commas(def.cost)
-		refs.detailReq.Text = BuildMenu.describe(def)
-		refs.detailTime.Text = def.buildTime > 0 and ("Builds in " .. Format.duration(def.buildTime)) or "Builds instantly"
-		refs.selectedLabel.Text = (s.moving and "Moving: " or "Selected: ") .. def.name .. (s.drag and "  (drag to place a line)" or "")
-	else
-		refs.detailName.Text = s.tool == "delete" and "Demolish" or (s.tool == "move" and "Move" or "Nothing selected")
-		refs.detailPrice.Text = ""
-		refs.detailReq.Text = s.tool == "delete" and "Click a building to remove it (50% refund, 100% while under construction)"
-			or (s.tool == "move" and "Click a building, then click its new spot" or "Pick something to build")
-		refs.detailTime.Text = ""
-		refs.selectedLabel.Text = s.tool and ("Tool: " .. s.tool) or "Selected: none"
-	end
 	for _, entry in cards do
 		updateCard(entry)
 	end
+	BuildMenu.refreshDetail()
 	BuildMenu.refreshTooltip()
 end
 
 function BuildMenu.refreshTooltip()
 	local s = Placement.state()
-	local def = refs.hoverDef or s.def
-	if not def or not root.Visible then
+	local def = s.def
+	if not root.Visible or (not def and not s.tool) then
 		tooltip.Visible = false
 		return
 	end
 	tooltip.Visible = true
-	refs.tipName.Text = def.name
-	local afford = (ClientState.get("cash") or 0) >= def.cost
-	refs.tipPrice.Text = "$" .. Format.commas(def.cost)
-	refs.tipPrice.TextColor3 = afford and Theme.Color.Good or Theme.Color.Bad
-	local ok, reason = lockReason(def)
-	refs.tipHint.Text = ok and (s.drag and "LMB drag   R turn   Q cancel" or "LMB place   R turn   Q cancel") or (reason or "Locked")
-	if not ok and def.research then
-		local r = Research.get(def.research)
-		refs.tipHint.Text = "Research: " .. (r and r.name or def.research)
-	elseif not ok and def.pass then
-		local p = Products.pass(def.pass)
-		refs.tipHint.Text = "Requires " .. (p and p.name or def.pass)
+	if def then
+		refs.tipName.Text = (s.moving and "MOVING " or "") .. string.upper(def.name)
+		refs.tipPrice.Text = s.moving and "" or ("$" .. Format.commas(def.cost))
+		refs.tipPrice.TextColor3 = (ClientState.get("cash") or 0) >= def.cost and C.Good or C.Bad
+		refs.tipHint.Text = s.drag and "HOLD LMB + DRAG  ·  R ROTATE  ·  Q CANCEL" or "LMB PLACE  ·  R ROTATE  ·  Q CANCEL"
+	else
+		refs.tipName.Text = s.tool == "delete" and "DEMOLISH MODE" or "MOVE MODE"
+		refs.tipPrice.Text = ""
+		refs.tipHint.Text = s.tool == "delete" and "CLICK A BUILDING  ·  2 EXIT" or "CLICK A BUILDING  ·  5 EXIT"
 	end
 end
 
@@ -528,6 +520,8 @@ function BuildMenu.open()
 		return
 	end
 	root.Visible = true
+	root.Position = UDim2.new(0.5, 0, 1, 40)
+	Lib.tween(root, 0.22, { Position = UDim2.new(0.5, 0, 1, -12) }, Enum.EasingStyle.Quint)
 	ClientState.setMode("build")
 	Sounds.play("Open", 1.1)
 	renderTabs()
@@ -564,111 +558,87 @@ function BuildMenu.init(gui: GuiObject)
 		Visible = false,
 		Parent = gui,
 	})
+	Lib.brackets(root, C.Accent, 14, 2, 4)
+	Lib.hazard({ Position = UDim2.fromOffset(0, 0), Size = UDim2.new(0, 160, 0, 4), BackgroundTransparency = 0.1, Parent = root }, C.Accent, C.Panel, 9)
 
-	-- category rail
+	-- department column
 	local rail = New("Frame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(10, 10),
-		Size = UDim2.fromOffset(84, H - 20),
+		Position = UDim2.fromOffset(12, 12),
+		Size = UDim2.fromOffset(LEFT, H - 24),
 		Parent = root,
 	}, { Lib.list("y", 8) })
+	Lib.caption("Department", { LayoutOrder = 0, Parent = rail })
 	for i, c in Buildings.Categories do
+		local tint = c.id == "Civilian" and C.Civil or C.Military
 		local tile = Lib.button({
 			Name = c.id,
-			Size = UDim2.fromOffset(84, (H - 28) / 2),
-			BackgroundColor3 = Theme.Color.Card,
+			Size = UDim2.fromOffset(LEFT, 92),
+			BackgroundColor3 = C.Raised,
 			LayoutOrder = i,
 			Parent = rail,
 			Activated = function()
 				setCategory(c.id)
 			end,
-		}, { Lib.corner(8), Lib.stroke(Theme.Color.CardStroke) })
-		local color = c.id == "Civilian" and Theme.Color.Civil or Theme.Color.Military
-		local box = New("Frame", {
-			BackgroundColor3 = color,
-			AnchorPoint = Vector2.new(0.5, 0),
-			Position = UDim2.new(0.5, 0, 0, 12),
-			Size = UDim2.fromOffset(42, 42),
-			Parent = tile,
-		}, { Lib.corner(8) })
-		local ic = Icons.get(c.id == "Civilian" and "house" or "helmet", 28, Color3.new(1, 1, 1))
-		ic.AnchorPoint = Vector2.new(0.5, 0.5)
-		ic.Position = UDim2.fromScale(0.5, 0.5)
-		ic.Parent = box
-		Lib.text({
-			Text = c.id,
-			TextSize = Theme.TextSize.Small,
-			TextColor3 = Theme.Color.TextSoft,
-			TextXAlignment = Enum.TextXAlignment.Center,
-			Position = UDim2.new(0, 0, 1, -28),
-			Size = UDim2.new(1, 0, 0, 18),
-			Parent = tile,
-		})
+		}, { Lib.corner(4), Lib.stroke(C.LineSoft) })
+		local ic = Icons.get(c.id == "Civilian" and "house" or "helmet", 34, tint)
+		ic.Position = UDim2.fromOffset(14, 14)
+		ic.Parent = tile
+		Lib.display({ Text = c.id == "Civilian" and "CIVIL" or "MILITARY", TextSize = 17, Position = UDim2.fromOffset(14, 54), Size = UDim2.new(1, -20, 0, 20), Parent = tile })
+		Lib.text({ Text = c.id == "Civilian" and "economy & people" or "arms & defense", TextSize = 11, TextColor3 = C.Muted, Position = UDim2.fromOffset(14, 72), Size = UDim2.new(1, -20, 0, 14), Parent = tile })
 		refs["cat_" .. c.id] = tile
 	end
 
-	-- main area
-	local mainW = W - 104 - 330
-	local main = Lib.card({
-		BackgroundColor3 = Theme.Color.CardAlt,
-		Position = UDim2.fromOffset(104, 10),
+	-- main column
+	local mainW = W - LEFT - RIGHT - 48
+	local main = New("Frame", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(LEFT + 24, 10),
 		Size = UDim2.fromOffset(mainW, H - 20),
 		Parent = root,
 	})
-	refs.tabs = New("Frame", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(10, 8),
-		Size = UDim2.new(1, -20, 0, 32),
-		Parent = main,
-	}, { Lib.list("x", 8) })
-	refs.crumb = Lib.caption("", {
-		Position = UDim2.fromOffset(12, 46),
-		Size = UDim2.new(0.5, 0, 0, 18),
-		TextSize = Theme.TextSize.Small,
-		Parent = main,
-	})
+	refs.tabs = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -310, 0, 32), Parent = main }, { Lib.list("x", 2) })
 	refs.factions = New("Frame", {
-		BackgroundColor3 = Theme.Color.CardAlt,
-		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -10, 0, 42),
-		Size = UDim2.fromOffset(276, 30),
-		Parent = main,
-	}, { Lib.corner(6), Lib.stroke(Theme.Color.CardStroke), Lib.pad(2), Lib.list("x", 4) })
-	refs.scroller = New("ScrollingFrame", {
 		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(10, 72),
-		Size = UDim2.new(1, -20, 0, 124),
-		CanvasSize = UDim2.new(),
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, 0, 0, 3),
+		Size = UDim2.fromOffset(300, 26),
+		Parent = main,
+	}, { Lib.list("x", 4, Enum.HorizontalAlignment.Right) })
+	Lib.divider({ Position = UDim2.fromOffset(0, 34), Parent = main })
+	refs.crumb = Lib.caption("", { Position = UDim2.fromOffset(0, 40), Size = UDim2.new(1, 0, 0, 14), Parent = main })
+	refs.scroller = Lib.scroll({
+		Position = UDim2.fromOffset(0, 60),
+		Size = UDim2.new(1, 0, 0, 172),
 		AutomaticCanvasSize = Enum.AutomaticSize.X,
 		ScrollingDirection = Enum.ScrollingDirection.X,
-		ScrollBarThickness = 4,
-		ScrollBarImageColor3 = Theme.Color.Faint,
-		BorderSizePixel = 0,
 		Parent = main,
 	}, { Lib.list("x", 8), Lib.pad(2, 2, 6, 2) })
 
-	-- right panel
-	local right = Lib.card({
-		BackgroundColor3 = Theme.Color.CardAlt,
+	-- detail column
+	local right = Lib.inset({
+		BackgroundTransparency = 0.25,
 		AnchorPoint = Vector2.new(1, 0),
-		Position = UDim2.new(1, -10, 0, 10),
-		Size = UDim2.fromOffset(316, H - 20),
+		Position = UDim2.new(1, -12, 0, 12),
+		Size = UDim2.fromOffset(RIGHT, H - 24),
 		Parent = root,
 	})
+	Lib.stroke(C.LineSoft, 1, 0).Parent = right
 	buildRight(right)
 
-	-- tooltip
-	tooltip = Lib.card({
-		Name = "Tooltip",
+	-- placement hint bar
+	tooltip = Lib.panel({
+		Name = "PlaceHint",
 		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -H - 22),
-		Size = UDim2.fromOffset(320, 60),
+		Position = UDim2.new(0.5, 0, 1, -H - 24),
+		Size = UDim2.fromOffset(520, 42),
 		Visible = false,
 		Parent = gui,
-	}, { Lib.pad(8, 14) })
-	refs.tipName = Lib.text({ Text = "", FontFace = Theme.Font.Bold, Size = UDim2.new(1, -90, 0, 22), Parent = tooltip })
-	refs.tipPrice = Lib.text({ Text = "", FontFace = Theme.Font.Bold, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, 0, 0, 0), Size = UDim2.fromOffset(90, 22), TextXAlignment = Enum.TextXAlignment.Right, Parent = tooltip })
-	refs.tipHint = Lib.text({ Text = "", TextSize = Theme.TextSize.Small, TextColor3 = Theme.Color.Muted, Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 0, 18), Parent = tooltip })
+	})
+	Lib.brackets(tooltip, C.Accent, 8, 2, 3)
+	refs.tipName = Lib.display({ Text = "", TextSize = 15, Position = UDim2.fromOffset(14, 0), Size = UDim2.new(0.5, -14, 1, 0), Parent = tooltip })
+	refs.tipPrice = Lib.display({ Text = "", TextSize = 15, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -14, 0, 0), Size = UDim2.fromOffset(110, 42), TextXAlignment = Enum.TextXAlignment.Right, Parent = tooltip })
+	refs.tipHint = Lib.text({ Text = "", FontFace = Theme.Font.Mono, TextSize = 10, TextColor3 = C.Muted, Position = UDim2.new(0.42, 0, 0, 0), Size = UDim2.new(0.58, -130, 1, 0), TextXAlignment = Enum.TextXAlignment.Right, Parent = tooltip })
 
 	Placement.onChanged(refreshTools)
 	ClientState.onAny(function(patch)
@@ -682,6 +652,7 @@ function BuildMenu.init(gui: GuiObject)
 			for _, entry in cards do
 				updateCard(entry)
 			end
+			BuildMenu.refreshDetail()
 			BuildMenu.refreshTooltip()
 		end
 	end)

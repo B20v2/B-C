@@ -4,3 +4,5 @@
 sourcemap.json
 /build/*.rbxl
 build/*.log
+__pycache__/
+*.blend1

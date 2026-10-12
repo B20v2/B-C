@@ -27,6 +27,8 @@ local S = {
 	CombatService = require(Services.CombatService),
 	MonetizationService = require(Services.MonetizationService),
 	RewardService = require(Services.RewardService),
+	NationService = require(Services.NationService),
+	WorldService = require(Services.WorldService),
 }
 
 local ORDER = {
@@ -43,6 +45,8 @@ local ORDER = {
 	"CombatService",
 	"MonetizationService",
 	"RewardService",
+	"NationService",
+	"WorldService",
 }
 
 -- Make sure every remote exists before any client asks for it.
@@ -65,6 +69,9 @@ local function setupLeaderstats(player: Player)
 	pop.Name = "Population"
 	pop.Value = "0"
 	pop.Parent = stats
+	local power = Instance.new("IntValue")
+	power.Name = "Power"
+	power.Parent = stats
 	stats.Parent = player
 end
 
@@ -80,6 +87,10 @@ local function updateLeaderstats(n: Nations.Nation)
 		end
 		if pop then
 			pop.Value = Format.short(n.data.Population)
+		end
+		local power = ls:FindFirstChild("Power") :: IntValue?
+		if power and n.stats.rank then
+			power.Value = n.stats.rank.power
 		end
 	end
 end
@@ -131,6 +142,7 @@ local function onLoaded(player: Player, data: { [string]: any })
 	S.EconomyService.compute(n, 0)
 	S.UnitService.loadNation(n)
 	S.RewardService.onJoin(n)
+	S.NationService.onJoin(n)
 	n.ready = true
 	S.StateService.push(n, true)
 	updateLeaderstats(n)

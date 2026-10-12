@@ -45,7 +45,11 @@ function StateService.snapshot(n: Nation): { [string]: any }
 		quest = { i = data.Quest, text = q.text, cur = qCur, max = qMax, reward = q.reward, done = qCur >= qMax }
 	end
 
+	local nation, rank = S.NationService.snapshot(n)
+
 	return {
+		nation = nation,
+		rank = rank,
 		cash = math.floor(data.Cash),
 		income = math.floor(st.income or 0),
 		gross = math.floor(st.gross or 0),

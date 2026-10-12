@@ -1,0 +1,840 @@
+{
+  "buildings": [
+    {
+      "category": "Civilian",
+      "d": 2,
+      "faction": "Standard",
+      "id": "small_house",
+      "model": "house",
+      "name": "Small House",
+      "params": {
+        "roof": "terracotta"
+      },
+      "tab": "Housing",
+      "w": 2
+    },
+    {
+      "category": "Civilian",
+      "d": 3,
+      "faction": "Standard",
+      "id": "cottage",
+      "model": "house",
+      "name": "Cottage",
+      "params": {
+        "long": true,
+        "roof": "slate"
+      },
+      "tab": "Housing",
+      "w": 2
+    },
+    {
+      "category": "Civilian",
+      "d": 2,
+      "faction": "Standard",
+      "id": "townhouse",
+      "model": "townhouse",
+      "name": "Townhouse Row",
+      "params": {
+        "count": 3
+      },
+      "tab": "Housing",
+      "w": 6
+    },
+    {
+      "category": "Civilian",
+      "d": 4,
+      "faction": "Standard",
+      "id": "apartment",
+      "model": "apartment",
+      "name": "Apartment Block",
+      "params": {
+        "floors": 4
+      },
+      "tab": "Housing",
+      "w": 6
+    },
+    {
+      "category": "Civilian",
+      "d": 4,
+      "faction": "Standard",
+      "id": "long_apartment",
+      "model": "apartment",
+      "name": "Long Apartment",
+      "params": {
+        "floors": 5
+      },
+      "tab": "Housing",
+      "w": 18
+    },
+    {
+      "category": "Civilian",
+      "d": 4,
+      "faction": "Standard",
+      "id": "highrise",
+      "model": "tower",
+      "name": "Highrise Tower",
+      "params": {
+        "floors": 16
+      },
+      "tab": "Housing",
+      "w": 4
+    },
+    {
+      "category": "Civilian",
+      "d": 2,
+      "faction": "Standard",
+      "id": "road",
+      "model": "road",
+      "name": "Road",
+      "params": {},
+      "tab": "Roads",
+      "w": 2
+    },
+    {
+      "category": "Civilian",
+      "d": 4,
+      "faction": "Standard",
+      "id": "plaza",
+      "model": "plaza",
+      "name": "Town Square",
+      "params": {},
+      "tab": "Roads",
+      "w": 4
+    },
+    {
+      "category": "Civilian",
+      "d": 2,
+      "faction": "Standard",
+      "id": "wind_turbine",
+      "model": "windTurbine",
+      "name": "Wind Turbine",
+      "params": {},
+      "tab": "Utilities",
+      "w": 2
+    },
+    {
+      "category": "Civilian",
+      "d": 6,
+      "faction": "Standard",
+      "id": "solar_farm",
+      "model": "solarFarm",
+      "name": "Solar Farm",
+      "params": {},
+      "tab": "Utilities",
+      "w": 6
+    },
+    {
+      "category": "Civilian",
+      "d": 8,
+      "faction": "Standard",
+      "id": "coal_plant",
+      "model": "coalPlant",
+      "name": "Coal Power Plant",
+      "params": {},
+      "tab": "Utilities",
+      "w": 10
+    },
+    {
+      "category": "Civilian",
+      "d": 12,
+      "faction": "Standard",
+      "id": "nuclear_plant",
+      "model": "nuclearPlant",
+      "name": "Nuclear Power Plant",
+      "params": {},
+      "tab": "Utilities",
+      "w": 14
+    },
+    {
+      "category": "Civilian",
+      "d": 2,
+      "faction": "Standard",
+      "id": "water_tower",
+      "model": "waterTower",
+      "name": "Water Tower",
+      "params": {},
+      "tab": "Utilities",
+      "w": 2
+    },
+    {
+      "category": "Civilian",
+      "d": 6,
+      "faction": "Standard",
+      "id": "pump_station",
+      "model": "pumpStation",
+      "name": "Pumping Station",
+      "params": {},
+      "tab": "Utilities",
+      "w": 6
+    },
+    {
+      "category": "Civilian",
+      "d": 3,
+      "faction": "Standard",
+      "id": "oil_pump",
+      "model": "oilPump",
+      "name": "Oil Pump",
+      "params": {},
+      "tab": "Industry",
+      "w": 2
+    },
+    {
+      "category": "Civilian",
+      "d": 4,
+      "faction": "Standard",
+      "id": "oil_tank",
+      "model": "oilTank",
+      "name": "Oil Tank Farm",
+      "params": {},
+      "tab": "Industry",
+      "w": 4
+    },
+    {
+      "category": "Civilian",
+      "d": 6,
+      "faction": "Standard",
+      "id": "small_refinery",
+      "model": "refinery",
+      "name": "Small Refinery",
+      "params": {
+        "scale": 1
+      },
+      "tab": "Industry",
+      "w": 6
+    },
+    {
+      "category": "Civilian",
+      "d": 8,
+      "faction": "Standard",
+      "id": "medium_refinery",
+      "model": "refinery",
+      "name": "Medium Refinery",
+      "params": {
+        "scale": 2
+      },
+      "tab": "Industry",
+      "w": 10
+    },
+    {
+      "category": "Civilian",
+      "d": 10,
+      "faction": "Standard",
+      "id": "large_refinery",
+      "model": "refinery",
+      "name": "Large Refinery",
+      "params": {
+        "scale": 3
+      },
+      "tab": "Industry",
+      "w": 14
+    },
+    {
+      "category": "Civilian",
+      "d": 8,
+      "faction": "Standard",
+      "id": "steel_mill",
+      "model": "steelMill",
+      "name": "Steel Mill",
+      "params": {},
+      "tab": "Industry",
+      "w": 10
+    },
+    {
+      "category": "Civilian",
+      "d": 6,
+      "faction": "Standard",
+      "id": "warehouse",
+      "model": "warehouse",
+      "name": "Warehouse",
+      "params": {},
+      "tab": "Industry",
+      "w": 8
+    },
+    {
+      "category": "Civilian",
+      "d": 6,
+      "faction": "Standard",
+      "id": "light_factory",
+      "model": "factory",
+      "name": "Consumer Factory",
+      "params": {
+        "tint": "civil"
+      },
+      "tab": "Industry",
+      "w": 8
+    },
+    {
+      "category": "Civilian",
+      "d": 3,
+      "faction": "Standard",
+      "id": "shop",
+      "model": "shop",
+      "name": "Corner Shop",
+      "params": {},
+      "tab": "Services",
+      "w": 3
+    },
+    {
+      "category": "Civilian",
+      "d": 4,
+      "faction": "Standard",
+      "id": "park",
+      "model": "park",
+      "name": "Park",
+      "params": {},
+      "tab": "Services",
+      "w": 4
+    },
+    {
+      "category": "Civilian",
+      "d": 6,
+      "faction": "Standard",
+      "id": "office",
+      "model": "office",
+      "name": "Office Block",
+      "params": {},
+      "tab": "Services",
+      "w": 6
+    },
+    {
+      "category": "Civilian",
+      "d": 6,
+      "faction": "Standard",
+      "id": "school",
+      "model": "school",
+      "name": "School",
+      "params": {},
+      "tab": "Services",
+      "w": 8
+    },
+    {
+      "category": "Civilian",
+      "d": 8,
+      "faction": "Standard",
+      "id": "hospital",
+      "model": "hospital",
+      "name": "Hospital",
+      "params": {},
+      "tab": "Services",
+      "w": 8
+    },
+    {
+      "category": "Civilian",
+      "d": 1,
+      "faction": "Standard",
+      "id": "billboard",
+      "model": "billboard",
+      "name": "Billboard",
+      "params": {},
+      "tab": "Services",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "Standard",
+      "id": "research_lab",
+      "model": "researchLab",
+      "name": "Research Lab",
+      "params": {},
+      "tab": "Research",
+      "w": 6
+    },
+    {
+      "category": "Military",
+      "d": 8,
+      "faction": "Standard",
+      "id": "university",
+      "model": "university",
+      "name": "University",
+      "params": {},
+      "tab": "Research",
+      "w": 10
+    },
+    {
+      "category": "Military",
+      "d": 10,
+      "faction": "Standard",
+      "id": "military_academy",
+      "model": "milResearch",
+      "name": "Military Research Center",
+      "params": {},
+      "tab": "Research",
+      "w": 10
+    },
+    {
+      "category": "Military",
+      "d": 8,
+      "faction": "Standard",
+      "id": "small_military_factory",
+      "model": "factory",
+      "name": "Small Military Factory",
+      "params": {
+        "tint": "military"
+      },
+      "tab": "Buildings",
+      "w": 8
+    },
+    {
+      "category": "Military",
+      "d": 10,
+      "faction": "Standard",
+      "id": "large_military_factory",
+      "model": "factory",
+      "name": "Large Military Factory",
+      "params": {
+        "large": true,
+        "tint": "military"
+      },
+      "tab": "Buildings",
+      "w": 14
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "Standard",
+      "id": "vehicle_depot",
+      "model": "depot",
+      "name": "Vehicle Depot",
+      "params": {},
+      "tab": "Buildings",
+      "w": 8
+    },
+    {
+      "category": "Military",
+      "d": 4,
+      "faction": "Standard",
+      "id": "radar_station",
+      "model": "radar",
+      "name": "Radar Station",
+      "params": {},
+      "tab": "Buildings",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 2,
+      "faction": "Standard",
+      "id": "ciws",
+      "model": "ciws",
+      "name": "CIWS Turret",
+      "params": {},
+      "tab": "Air Defense",
+      "w": 2
+    },
+    {
+      "category": "Military",
+      "d": 4,
+      "faction": "Standard",
+      "id": "sam_site",
+      "model": "sam",
+      "name": "SAM Site",
+      "params": {},
+      "tab": "Air Defense",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "Standard",
+      "id": "lr_sam",
+      "model": "sam",
+      "name": "Long-Range SAM",
+      "params": {
+        "large": true
+      },
+      "tab": "Air Defense",
+      "w": 6
+    },
+    {
+      "category": "Military",
+      "d": 3,
+      "faction": "Standard",
+      "id": "laser_defense",
+      "model": "laser",
+      "name": "Laser Defense",
+      "params": {},
+      "tab": "Air Defense",
+      "w": 3
+    },
+    {
+      "category": "Military",
+      "d": 3,
+      "faction": "Eastern",
+      "id": "tor_system",
+      "model": "ciws",
+      "name": "Tor-M2",
+      "params": {
+        "eastern": true
+      },
+      "tab": "Air Defense",
+      "w": 3
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "Eastern",
+      "id": "s300",
+      "model": "sam",
+      "name": "S-300 Battery",
+      "params": {
+        "eastern": true,
+        "large": true
+      },
+      "tab": "Air Defense",
+      "w": 6
+    },
+    {
+      "category": "Military",
+      "d": 7,
+      "faction": "Eastern",
+      "id": "s400",
+      "model": "sam",
+      "name": "S-400 Battery",
+      "params": {
+        "eastern": true,
+        "large": true
+      },
+      "tab": "Air Defense",
+      "w": 7
+    },
+    {
+      "category": "Military",
+      "d": 3,
+      "faction": "European",
+      "id": "crotale",
+      "model": "ciws",
+      "name": "Crotale NG",
+      "params": {
+        "european": true
+      },
+      "tab": "Air Defense",
+      "w": 3
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "European",
+      "id": "samp_t",
+      "model": "sam",
+      "name": "SAMP/T",
+      "params": {
+        "european": true,
+        "large": true
+      },
+      "tab": "Air Defense",
+      "w": 6
+    },
+    {
+      "category": "Military",
+      "d": 5,
+      "faction": "Standard",
+      "id": "srbm_launcher",
+      "model": "launcher",
+      "name": "SRBM Launcher",
+      "params": {
+        "kind": "erect"
+      },
+      "tab": "Missiles",
+      "w": 3
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "Standard",
+      "id": "glcm_launcher",
+      "model": "launcher",
+      "name": "GLCM Launcher",
+      "params": {
+        "kind": "box"
+      },
+      "tab": "Missiles",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "Standard",
+      "id": "mrbm_launcher",
+      "model": "launcher",
+      "name": "MRBM Launcher",
+      "params": {
+        "big": true,
+        "kind": "erect"
+      },
+      "tab": "Missiles",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "Standard",
+      "id": "cluster_launcher",
+      "model": "launcher",
+      "name": "Cluster BM Launcher",
+      "params": {
+        "kind": "erect",
+        "tint": "sand"
+      },
+      "tab": "Missiles",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 7,
+      "faction": "Standard",
+      "id": "hypersonic_launcher",
+      "model": "launcher",
+      "name": "Hypersonic BM Launcher",
+      "params": {
+        "big": true,
+        "kind": "erect",
+        "tint": "dark"
+      },
+      "tab": "Missiles",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 5,
+      "faction": "Eastern",
+      "id": "otr_launcher",
+      "model": "launcher",
+      "name": "OTR Launcher",
+      "params": {
+        "kind": "erect",
+        "tint": "eastern"
+      },
+      "tab": "Missiles",
+      "w": 3
+    },
+    {
+      "category": "Military",
+      "d": 6,
+      "faction": "European",
+      "id": "scalp_battery",
+      "model": "launcher",
+      "name": "Storm Battery",
+      "params": {
+        "kind": "box",
+        "tint": "european"
+      },
+      "tab": "Missiles",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 3,
+      "faction": "Standard",
+      "id": "hornet_launcher",
+      "model": "droneRack",
+      "name": "Hornet Drone Rack",
+      "params": {},
+      "tab": "Drones",
+      "w": 3
+    },
+    {
+      "category": "Military",
+      "d": 7,
+      "faction": "Standard",
+      "id": "raptor_launcher",
+      "model": "droneRamp",
+      "name": "Raptor Jet Ramp",
+      "params": {},
+      "tab": "Drones",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 4,
+      "faction": "Eastern",
+      "id": "swarm_rack",
+      "model": "droneRack",
+      "name": "Swarm Rack",
+      "params": {
+        "big": true
+      },
+      "tab": "Drones",
+      "w": 4
+    },
+    {
+      "category": "Military",
+      "d": 7,
+      "faction": "European",
+      "id": "falcon_ramp",
+      "model": "droneRamp",
+      "name": "Falcon Ramp",
+      "params": {
+        "tint": "european"
+      },
+      "tab": "Drones",
+      "w": 4
+    }
+  ],
+  "cellSize": 4,
+  "points": [
+    {
+      "id": "capital",
+      "model": "city",
+      "name": "CAPITAL"
+    },
+    {
+      "id": "airport",
+      "model": "airport",
+      "name": "AIRPORT"
+    },
+    {
+      "id": "oil_field",
+      "model": "oilField",
+      "name": "OIL FIELD"
+    },
+    {
+      "id": "nuclear_plant",
+      "model": "nuclear",
+      "name": "NUCLEAR POWER PLANT"
+    },
+    {
+      "id": "city",
+      "model": "city",
+      "name": "CITY"
+    },
+    {
+      "id": "port",
+      "model": "port",
+      "name": "PORT"
+    },
+    {
+      "id": "military_base",
+      "model": "base",
+      "name": "MILITARY BASE"
+    }
+  ],
+  "units": [
+    {
+      "faction": "Standard",
+      "id": "truck",
+      "model": "truck",
+      "name": "Supply Truck",
+      "params": {}
+    },
+    {
+      "faction": "Standard",
+      "id": "marder",
+      "model": "ifv",
+      "name": "Marder",
+      "params": {}
+    },
+    {
+      "faction": "Standard",
+      "id": "leopard",
+      "model": "tank",
+      "name": "Leopard",
+      "params": {}
+    },
+    {
+      "faction": "Standard",
+      "id": "himars",
+      "model": "mlrs",
+      "name": "HIMARS",
+      "params": {}
+    },
+    {
+      "faction": "Standard",
+      "id": "gepard",
+      "model": "spaag",
+      "name": "Gepard",
+      "params": {}
+    },
+    {
+      "faction": "Eastern",
+      "id": "bmp",
+      "model": "ifv",
+      "name": "BMP-3",
+      "params": {
+        "eastern": true
+      }
+    },
+    {
+      "faction": "Eastern",
+      "id": "t90",
+      "model": "tank",
+      "name": "T-90",
+      "params": {
+        "eastern": true
+      }
+    },
+    {
+      "faction": "Eastern",
+      "id": "tor_m",
+      "model": "spaag",
+      "name": "Tor-M",
+      "params": {
+        "eastern": true
+      }
+    },
+    {
+      "faction": "European",
+      "id": "vbci",
+      "model": "ifv",
+      "name": "VBCI",
+      "params": {
+        "wheeled": true
+      }
+    },
+    {
+      "faction": "European",
+      "id": "leclerc",
+      "model": "tank",
+      "name": "Leclerc",
+      "params": {
+        "european": true
+      }
+    },
+    {
+      "faction": "European",
+      "id": "caesar",
+      "model": "mlrs",
+      "name": "CAESAR",
+      "params": {
+        "gun": true
+      }
+    }
+  ],
+  "weapons": [
+    {
+      "id": "HORNET",
+      "kind": "drone",
+      "name": "Hornet Drone"
+    },
+    {
+      "id": "RAPTOR",
+      "kind": "drone",
+      "name": "Raptor Jet Drone"
+    },
+    {
+      "id": "SRBM",
+      "kind": "missile",
+      "name": "Short-Range Ballistic Missile"
+    },
+    {
+      "id": "GLCM",
+      "kind": "missile",
+      "name": "Ground-Launched Cruise Missile"
+    },
+    {
+      "id": "MRBM",
+      "kind": "missile",
+      "name": "Medium-Range Ballistic Missile"
+    },
+    {
+      "id": "CLUSTER",
+      "kind": "missile",
+      "name": "Cluster Ballistic Missile"
+    },
+    {
+      "id": "HYPERSONIC",
+      "kind": "missile",
+      "name": "Hypersonic Ballistic Missile"
+    }
+  ]
+}

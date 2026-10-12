@@ -16,6 +16,7 @@
 ]]
 
 local Config = require(script.Parent.Config)
+local AssetLibrary = require(script.Parent.AssetLibrary)
 
 local ModelBuilder = {}
 
@@ -128,16 +129,23 @@ local function noCollide(p: BasePart)
 	return p
 end
 
+-- Window pane: glows at night (see NightLights on the client).
+local function lit(p: BasePart): BasePart
+	p.CanCollide = false
+	p:SetAttribute("Window", true)
+	return p
+end
+
 -- Window bands around a box (centered x,z; floors stacked from y0).
 local function windows(w: number, d: number, x: number, z: number, y0: number, floors: number, floorH: number, color: Color3?, gaps: boolean?)
 	local col = color or C.window
 	for f = 0, floors - 1 do
 		local y = y0 + f * floorH + floorH * 0.32
 		local h = floorH * 0.42
-		noCollide(blk(w - 1, h, 0.2, x, y, z - d / 2 - 0.05, col))
-		noCollide(blk(w - 1, h, 0.2, x, y, z + d / 2 + 0.05, col))
-		noCollide(blk(0.2, h, d - 1, x - w / 2 - 0.05, y, z, col))
-		noCollide(blk(0.2, h, d - 1, x + w / 2 + 0.05, y, z, col))
+		lit(blk(w - 1, h, 0.2, x, y, z - d / 2 - 0.05, col))
+		lit(blk(w - 1, h, 0.2, x, y, z + d / 2 + 0.05, col))
+		lit(blk(0.2, h, d - 1, x - w / 2 - 0.05, y, z, col))
+		lit(blk(0.2, h, d - 1, x + w / 2 + 0.05, y, z, col))
 	end
 	if gaps then
 		-- vertical mullions so long facades read as individual windows
@@ -212,10 +220,10 @@ Styles.house = function(w, d, p)
 	local roofC = p.roof == "slate" and C.slate or C.terracotta
 	gableRoof(bw + 0.6, bd, 0, G + 5, 0, roofC)
 	noCollide(blk(1.4, 2.6, 0.2, 0, G, -bd / 2 - 0.1, C.trunk)) -- door
-	noCollide(blk(1.2, 1.2, 0.2, -bw / 4 - 0.3, G + 2.2, -bd / 2 - 0.1, C.window))
-	noCollide(blk(1.2, 1.2, 0.2, bw / 4 + 0.3, G + 2.2, -bd / 2 - 0.1, C.window))
-	noCollide(blk(0.2, 1.2, 1.2, bw / 2 + 0.1, G + 2.2, 0, C.window))
-	noCollide(blk(0.2, 1.2, 1.2, -bw / 2 - 0.1, G + 2.2, 0, C.window))
+	lit(blk(1.2, 1.2, 0.2, -bw / 4 - 0.3, G + 2.2, -bd / 2 - 0.1, C.window))
+	lit(blk(1.2, 1.2, 0.2, bw / 4 + 0.3, G + 2.2, -bd / 2 - 0.1, C.window))
+	lit(blk(0.2, 1.2, 1.2, bw / 2 + 0.1, G + 2.2, 0, C.window))
+	lit(blk(0.2, 1.2, 1.2, -bw / 2 - 0.1, G + 2.2, 0, C.window))
 	blk(0.8, 2.5, 0.8, bw / 4, G + 6, bd / 4, C.brick)
 end
 
@@ -229,8 +237,8 @@ Styles.townhouse = function(w, d, p)
 		blk(bw, 7, bd, x, G, 0, walls[(i - 1) % #walls + 1])
 		gableRoof(bw, bd, x, G + 7, 0, i % 2 == 0 and C.slate or C.terracotta, 24)
 		noCollide(blk(1.4, 2.6, 0.2, x, G, -bd / 2 - 0.1, C.trunk))
-		noCollide(blk(bw - 2, 1.2, 0.2, x, G + 4.4, -bd / 2 - 0.1, C.window))
-		noCollide(blk(bw - 2, 1.2, 0.2, x, G + 4.4, bd / 2 + 0.1, C.window))
+		lit(blk(bw - 2, 1.2, 0.2, x, G + 4.4, -bd / 2 - 0.1, C.window))
+		lit(blk(bw - 2, 1.2, 0.2, x, G + 4.4, bd / 2 + 0.1, C.window))
 	end
 end
 
@@ -480,7 +488,7 @@ Styles.factory = function(w, d, p)
 		plank(bw, 0.4, step / math.cos(math.rad(30)), CFrame.new(0, G + h + step * 0.29, z) * CFrame.Angles(math.rad(-30), 0, 0), roofC)
 		noCollide(blk(bw - 0.4, step * 0.55, 0.2, 0, G + h, z + step / 2 - 0.15, C.glass))
 	end
-	noCollide(blk(bw - 2, 1.4, 0.2, 0, G + 3, -bd / 2 - 0.1, C.window))
+	lit(blk(bw - 2, 1.4, 0.2, 0, G + 3, -bd / 2 - 0.1, C.window))
 	for i = 1, (p.large and 3 or 2) do
 		noCollide(blk(3.4, 4.4, 0.3, -bw / 2 + i * bw / ((p.large and 3 or 2) + 1), G, bd / 2 + 0.1, C.darkMetal))
 	end
@@ -656,7 +664,7 @@ end
 local function launcherTruck(len: number, col: Color3)
 	blk(3.2, 1.2, len, 0, G + 0.9, 0, col)
 	blk(3.2, 2.2, 2.6, 0, G + 0.9, -len / 2 + 1.3, col) -- cab
-	noCollide(blk(2.8, 0.8, 0.15, 0, G + 2.2, -len / 2 - 0.02, C.window))
+	lit(blk(2.8, 0.8, 0.15, 0, G + 2.2, -len / 2 - 0.02, C.window))
 	local axles = math.max(2, math.floor(len / 2.6))
 	for i = 0, axles - 1 do
 		wheelPair(0, G + 0.75, -len / 2 + 1.2 + i * ((len - 2.4) / (axles - 1)), 3.3, 1.5)
@@ -753,7 +761,55 @@ end
 ---------------------------------------------------------------------------
 -- Public: buildings
 ---------------------------------------------------------------------------
+-- Kit vehicles get an invisible Root (physics / selection) sized to the model.
+local function kitWithRoot(name: string, length: number, centered: boolean): Model?
+	local kit = AssetLibrary.instantiate(name, { length = length })
+	if not kit then
+		return nil
+	end
+	local oldBase = kit:FindFirstChild("Base")
+	if oldBase then
+		oldBase:Destroy()
+	end
+	local _, size = kit:GetBoundingBox()
+	if centered then
+		for _, part in kit:GetDescendants() do
+			if part:IsA("BasePart") then
+				part.CFrame -= Vector3.new(0, size.Y / 2, 0)
+			end
+		end
+	end
+	local r = Instance.new("Part")
+	r.Name = "Root"
+	r.Size = size
+	r.CFrame = CFrame.new(0, centered and 0 or size.Y / 2, 0)
+	r.Transparency = 1
+	r.CanCollide = false
+	r.CanTouch = false
+	r.Anchored = true
+	r.Parent = kit
+	kit.PrimaryPart = r
+	for _, part in kit:GetDescendants() do
+		if part:IsA("BasePart") then
+			part.CanCollide = false
+		end
+	end
+	return kit
+end
+
+local UNIT_LENGTH = { truck = 8, ifv = 9, tank = 10, mlrs = 9.6, spaag = 9 }
+
+-- True when the Blender kit has been imported into ReplicatedStorage.Assets.
+function ModelBuilder.usingKit(): boolean
+	return AssetLibrary.count() > 0
+end
+
 function ModelBuilder.building(def: { id: string, model: string, size: { number }, params: { [string]: any }? }): Model
+	local kit = AssetLibrary.instantiate(def.id, { width = def.size[1] * CELL, depth = def.size[2] * CELL, hitbox = true })
+	if kit then
+		kit.Name = def.id
+		return kit
+	end
 	local model = Instance.new("Model")
 	model.Name = def.id
 	M = model
@@ -797,7 +853,7 @@ local UnitStyles: { [string]: (p: { [string]: any }, col: Color3) -> () } = {}
 UnitStyles.truck = function(_p, col)
 	root(3.6, 3.4, 8)
 	blk(3.2, 2.4, 2.4, 0, 0.8, -2.6, col)
-	noCollide(blk(2.8, 0.8, 0.15, 0, 2.1, -3.82, C.window))
+	lit(blk(2.8, 0.8, 0.15, 0, 2.1, -3.82, C.window))
 	blk(3.4, 2.6, 5, 0, 0.8, 1.2, rgb(120, 126, 98))
 	wheelPair(0, 0.75, -2.6, 3.3, 1.5)
 	wheelPair(0, 0.75, 0.6, 3.3, 1.5)
@@ -832,7 +888,7 @@ UnitStyles.mlrs = function(p, col)
 	root(3.8, 4, 9.6)
 	blk(3.2, 1, 9, 0, 0.8, 0, col)
 	blk(3.2, 2.2, 2.4, 0, 1.8, -3.3, col)
-	noCollide(blk(2.8, 0.8, 0.15, 0, 3, -4.52, C.window))
+	lit(blk(2.8, 0.8, 0.15, 0, 3, -4.52, C.window))
 	for _, z in { -3.3, 1.2, 3.4 } do
 		wheelPair(0, 0.75, z, 3.3, 1.5)
 	end
@@ -856,6 +912,11 @@ UnitStyles.spaag = function(_p, col)
 end
 
 function ModelBuilder.unit(def: { id: string, model: string, params: { [string]: any }? }): Model
+	local kit = kitWithRoot("unit_" .. def.id, UNIT_LENGTH[def.model] or 9, false)
+	if kit then
+		kit.Name = def.id
+		return kit
+	end
 	local model = Instance.new("Model")
 	model.Name = def.id
 	M = model
@@ -876,6 +937,21 @@ end
 -- Projectiles (client visuals), forward = -Z
 ---------------------------------------------------------------------------
 function ModelBuilder.projectile(def: { kind: string, color: Color3, id: string }): Model
+	local kit = kitWithRoot("proj_" .. def.id, def.kind == "drone" and 4.6 or (def.id == "MRBM" and 7.4 or 6), true)
+	if kit then
+		kit.Name = def.id
+		local tail = Instance.new("Attachment")
+		tail.Name = "Tail"
+		tail.Position = Vector3.new(0, 0, (kit.PrimaryPart :: BasePart).Size.Z / 2)
+		tail.Parent = kit.PrimaryPart
+		for _, part in kit:GetDescendants() do
+			if part:IsA("BasePart") then
+				part.CanQuery = false
+				part.CastShadow = false
+			end
+		end
+		return kit
+	end
 	local model = Instance.new("Model")
 	model.Name = def.id
 	M = model
@@ -915,12 +991,22 @@ function ModelBuilder.projectile(def: { kind: string, color: Color3, id: string 
 end
 
 function ModelBuilder.fuelTruck(): Model
+	local kit = kitWithRoot("fuel_truck", 8, false)
+	if kit then
+		kit.Name = "FuelTruck"
+		for _, part in kit:GetDescendants() do
+			if part:IsA("BasePart") then
+				part.CanQuery = false
+			end
+		end
+		return kit
+	end
 	local model = Instance.new("Model")
 	model.Name = "FuelTruck"
 	M = model
 	root(3.4, 3.6, 8)
 	blk(3, 2.2, 2.2, 0, 0.8, -2.8, C.white)
-	noCollide(blk(2.6, 0.8, 0.15, 0, 2, -3.92, C.window))
+	lit(blk(2.6, 0.8, 0.15, 0, 2, -3.92, C.window))
 	blk(3, 0.6, 5.6, 0, 0.7, 0.9, C.darkMetal)
 	axleCyl(5, 2.6, CFrame.new(0, 2.6, 0.9) * CFrame.Angles(0, math.rad(90), 0), C.white)
 	noCollide(blk(3.1, 0.4, 2, 0, 2.4, 0.9, C.orange))
@@ -1026,6 +1112,11 @@ PointStyles.base = function(s)
 end
 
 function ModelBuilder.warPoint(style: string, size: number): Model
+	local kit = AssetLibrary.instantiate("site_" .. style, { width = size, depth = size })
+	if kit then
+		kit.Name = style
+		return kit
+	end
 	local model = Instance.new("Model")
 	model.Name = style
 	M = model

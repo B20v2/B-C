@@ -74,8 +74,9 @@ H.game = game
 local cache = {}
 local env
 local function req(module)
-	if cache[module] then
-		return cache[module]
+	local key = module:GetFullName()
+	if cache[key] then
+		return cache[key]
 	end
 	assert(module:IsA("ModuleScript"), "require on non-module " .. module:GetFullName())
 	local fn = luau.load(module.Source, {
@@ -89,7 +90,7 @@ local function req(module)
 		end)(),
 	})
 	local result = fn()
-	cache[module] = result
+	cache[key] = result
 	return result
 end
 
@@ -97,7 +98,7 @@ env = setmetatable({
 	Instance = roblox.Instance, Vector3 = roblox.Vector3, Vector2 = roblox.Vector2, CFrame = roblox.CFrame,
 	Color3 = roblox.Color3, UDim2 = roblox.UDim2, UDim = roblox.UDim, Enum = roblox.Enum, Font = roblox.Font,
 	NumberSequence = roblox.NumberSequence, NumberSequenceKeypoint = roblox.NumberSequenceKeypoint,
-	ColorSequence = roblox.ColorSequence, NumberRange = roblox.NumberRange, Random = Random,
+	ColorSequence = roblox.ColorSequence, ColorSequenceKeypoint = roblox.ColorSequenceKeypoint, NumberRange = roblox.NumberRange, Random = Random,
 	typeof = typeof, task = task, warn = print,
 }, { __index = _G })
 
@@ -251,6 +252,96 @@ check(pcall(ModelBuilder.fuelTruck), "fuel truck")
 for _, p in WarMap do
 	local ok, m = pcall(ModelBuilder.warPoint, p.model, 130)
 	check(ok, "war point " .. p.model .. ": " .. tostring(m))
+end
+
+-- Rank ladder + flags
+local Rank = mod("Util.Rank")
+local Flag = mod("Util.Flag")
+check(Rank.of(0).name == "Outpost" and Rank.of(0).level == 1, "rank 0")
+check(Rank.of(600).name == "Township" and Rank.of(600).progress > 0, "rank township")
+check(Rank.of(1e9).level == #Config.Ranks and Rank.of(1e9).next == nil, "rank cap")
+check(Rank.power({ pop = 100, buildingValue = 10000, researched = 2, units = 1, points = 1 }) == 100 + 100 + 300 + 80 + 600, "power formula")
+check(Flag.encode(Flag.decode("3,5,1,6,4")) == "3,5,1,6,4", "flag round trip")
+check(Flag.encode(Flag.decode("garbage")) == Flag.encode(Flag.Default), "flag decode fallback")
+check(Flag.encode(Flag.sanitize({ p = 99, c = { -4, 99, 2.7 }, e = 50 })) == "6,1,12,2,4", "flag sanitize clamps")
+for p = 1, #Flag.Patterns do
+	for e = 0, #Flag.Emblems - 1 do
+		local holder = roblox.Instance.new("Frame")
+		local ok, err = pcall(Flag.draw, holder, { p = p, c = { 1, 4, 3 }, e = e })
+		check(ok, ("flag draw p%d e%d: %s"):format(p, e, tostring(err)))
+	end
+end
+
+-- Blender kit: fake imported meshes are picked up, normalised and used
+do
+	local roblox = require("@lune/roblox")
+	local V3, CF = roblox.Vector3, roblox.CFrame
+	local RS = game:GetService("ReplicatedStorage")
+	local assets = RS:FindFirstChild("Assets") or roblox.Instance.new("Folder")
+	assets.Name = "Assets"
+	assets.Parent = RS
+	local function mesh(parent, name, size, pos)
+		local p = roblox.Instance.new("Part")
+		p.Name = name
+		p.Size = size
+		p.CFrame = CF.new(pos)
+		p.Parent = parent
+		return p
+	end
+	-- a house modelled 3x too big, offset from the origin, long side on Z
+	local house = roblox.Instance.new("Model")
+	house.Name = "small_house"
+	house.Parent = assets
+	mesh(house, "small_house__Body", V3.new(18, 15, 24), V3.new(50, 7.5, 50))
+	mesh(house, "small_house__Lights", V3.new(12, 3, 0.3), V3.new(50, 6, 38))
+	-- a tank pointing +X (Front marker on +X)
+	local tank = roblox.Instance.new("Model")
+	tank.Name = "unit_m1"
+	tank.Parent = assets
+	mesh(tank, "unit_t90__Body", V3.new(20, 6, 8), V3.new(0, 3, 0))
+	mesh(tank, "unit_t90__Front", V3.new(0.2, 0.2, 0.2), V3.new(12, 3, 0))
+	-- turbine with a rotor + pivot marker
+	local wt = roblox.Instance.new("Model")
+	wt.Name = "wind_turbine"
+	wt.Parent = assets
+	mesh(wt, "wind_turbine__Body", V3.new(2, 30, 2), V3.new(0, 15, 0))
+	mesh(wt, "wind_turbine__Rotor", V3.new(16, 16, 1), V3.new(0, 30, -1.2))
+	mesh(wt, "wind_turbine__Spin", V3.new(0.2, 0.2, 0.2), V3.new(0, 30, -1.2))
+	local AssetLibrary = mod("AssetLibrary")
+	AssetLibrary.refresh()
+	check(AssetLibrary.count() == 3 and AssetLibrary.has("small_house") and AssetLibrary.has("unit_t90"), "kit indexed")
+	local defH = Buildings.get("small_house")
+	local m = ModelBuilder.building(defH)
+	check(m:GetAttribute("FromKit") == true, "kit building used")
+	local lo, hi = bbox(m)
+	local fw, fd = defH.size[1] * Config.CellSize, defH.size[2] * Config.CellSize
+	check(hi.X - lo.X <= fw + 0.05 and hi.Z - lo.Z <= fd + 0.05 and math.abs(lo.Y) < 0.05, ("kit building fits footprint (%.2f x %.2f in %dx%d)"):format(hi.X - lo.X, hi.Z - lo.Z, fw, fd))
+	check(m:FindFirstChild("Hitbox") ~= nil and m.PrimaryPart.Name == "Base", "kit building base + hitbox")
+	local glow = m:FindFirstChild("LightsGlow")
+	check(glow ~= nil and glow:GetAttribute("NightGlow") == true and glow.Transparency == 1, "kit night glow twin")
+	local unitDef
+	for _, u in Units.all() do
+		if u.id == "t90" then
+			unitDef = u
+		end
+	end
+	if unitDef then
+		local um = ModelBuilder.unit(unitDef)
+		-- rotation-aware extents of the hull mesh
+		local body = um:FindFirstChild("unit_t90__Body")
+		local ext = body.CFrame:VectorToWorldSpace(body.Size)
+		check(um.PrimaryPart.Name == "Root" and math.abs(ext.Z) > math.abs(ext.X), "kit unit turned to face -Z")
+	else
+		check(false, "unit t90 missing from catalog")
+	end
+	local wtm = ModelBuilder.building(Buildings.get("wind_turbine"))
+	local rotor = wtm:FindFirstChild("Rotor")
+	check(rotor and rotor.PrimaryPart and rotor:GetAttribute("Spin") ~= nil, "kit rotor pivot")
+	-- unknown ids still fall back to procedural models
+	check(ModelBuilder.building(Buildings.get("apartment")):GetAttribute("FromKit") == nil, "procedural fallback")
+	assets:Destroy()
+	AssetLibrary.refresh()
+	check(AssetLibrary.count() == 0, "kit cleared")
 end
 
 -- Ballistics: endpoints and apex

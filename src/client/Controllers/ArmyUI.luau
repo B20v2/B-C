@@ -1,13 +1,15 @@
 --[[
 	ArmyUI
-	Overview of your vehicles: counts per type and location, plus one-click
-	Deploy (through the tunnel to the mainland), Recall and Select.
+	Your forces: unit-type cards with 3D previews, roles, stats and how many
+	are at home vs. on the mainland, plus DEPLOY ALL / RECALL ALL / COMMAND.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.Shared
 local Units = require(Shared.Catalog.Units)
+local ModelBuilder = require(Shared.ModelBuilder)
+local Unlocks = require(Shared.Util.Unlocks)
 local Net = require(Shared.Net)
 
 local Client = script.Parent.Parent
@@ -22,49 +24,50 @@ local Sounds = require(script.Parent.Sounds)
 local UnitView = require(script.Parent.UnitView)
 
 local New = Lib.New
+local C = Theme.Color
 
 local ArmyUI = {}
 
+local ROLE_COLORS = {
+	IFV = C.Info,
+	Tank = C.Gold,
+	Artillery = C.Military,
+	["Anti-Air"] = C.Teal,
+	Capture = C.Good,
+}
+
 function ArmyUI.open()
-	local win = Modal.open("Army", "Vehicles are built in Military Factories", 640, 520)
-	local ic = Icons.tank(40, Color3.fromRGB(110, 130, 80))
-	ic.Position = UDim2.fromOffset(6, 4)
+	local win = Modal.open("Army Command", "Build vehicles in Military Factories · deploy them to the mainland", 980, 620)
+	local ic = Icons.tank(36, Color3.fromRGB(170, 200, 130))
+	ic.Position = UDim2.fromOffset(8, 6)
 	ic.Parent = win.iconHolder
 
 	local mine = UnitView.mine()
 	local byType: { [string]: { home: number, mainland: number } } = {}
+	local deployed = 0
 	for _, m in mine do
 		local id = m:GetAttribute("UnitId") :: string
 		byType[id] = byType[id] or { home = 0, mainland = 0 }
 		if m:GetAttribute("Location") == "mainland" then
 			byType[id].mainland += 1
+			deployed += 1
 		else
 			byType[id].home += 1
 		end
 	end
 
-	local top = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), Parent = win.body }, { Lib.list("x", 8) })
-	Lib.text({
-		Text = ("%d / %d vehicles"):format(ClientState.get("units") or #mine, ClientState.get("unitCap") or 10),
-		FontFace = Theme.Font.Bold,
-		TextSize = Theme.TextSize.Title,
-		Size = UDim2.new(0, 190, 1, 0),
-		LayoutOrder = 1,
-		Parent = top,
-	})
-	local function action(text: string, color: Color3, order: number, fn: () -> ())
-		Lib.button({
-			Text = text,
-			FontFace = Theme.Font.Bold,
-			TextColor3 = Color3.new(1, 1, 1),
-			BackgroundColor3 = color,
-			Size = UDim2.fromOffset(128, 38),
-			LayoutOrder = order,
-			Parent = top,
-			Activated = fn,
-		}, { Lib.corner(7) })
+	local top = New("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 64), Parent = win.body }, { Lib.list("x", 8, nil, Enum.VerticalAlignment.Center) })
+	local function stat(caption: string, value: string, color: Color3, order: number)
+		local card = Lib.card({ Size = UDim2.fromOffset(170, 64), LayoutOrder = order, Parent = top }, { Lib.pad(9, 12) })
+		Lib.caption(caption, { Parent = card })
+		Lib.display({ Text = value, TextSize = 22, TextColor3 = color, Position = UDim2.fromOffset(0, 18), Size = UDim2.new(1, 0, 0, 26), Parent = card })
 	end
-	action("Deploy All", Theme.Color.Military, 2, function()
+	stat("Vehicles", ("%d / %d"):format(ClientState.get("units") or #mine, ClientState.get("unitCap") or 10), C.Text, 1)
+	stat("On the mainland", tostring(deployed), C.Military, 2)
+	local function action(name: string, text: string, variant: string, order: number, fn: () -> ())
+		Lib.button({ Name = name, Variant = variant, Text = text, TextSize = 13, Size = UDim2.fromOffset(150, 44), LayoutOrder = order, Parent = top, Activated = fn })
+	end
+	action("DeployAll", "DEPLOY ALL", "primary", 3, function()
 		local res = Net.request("DeployUnits", nil)
 		if res.ok then
 			Sounds.play("Whoosh")
@@ -74,7 +77,7 @@ function ArmyUI.open()
 			Notifications.show(res.err, "info")
 		end
 	end)
-	action("Recall All", Theme.Color.Time, 3, function()
+	action("RecallAll", "RECALL ALL", "secondary", 4, function()
 		local res = Net.request("RecallUnits", nil)
 		if res.ok then
 			Modal.close()
@@ -82,7 +85,7 @@ function ArmyUI.open()
 			Notifications.show(res.err, "info")
 		end
 	end)
-	action("Command", Theme.Color.Good, 4, function()
+	action("Command", "COMMAND", "secondary", 5, function()
 		Modal.close()
 		Hub.call("goWar", "mainland")
 		for _, m in UnitView.mine() do
@@ -92,34 +95,46 @@ function ArmyUI.open()
 		end
 	end)
 
-	local list = New("ScrollingFrame", {
-		BackgroundTransparency = 1,
-		Position = UDim2.fromOffset(0, 52),
-		Size = UDim2.new(1, 0, 1, -52),
-		CanvasSize = UDim2.new(),
-		AutomaticCanvasSize = Enum.AutomaticSize.Y,
-		ScrollBarThickness = 4,
-		BorderSizePixel = 0,
-		Parent = win.body,
-	}, { Lib.list("y", 6) })
-	local any = false
+	local list = Lib.scroll({ Position = UDim2.fromOffset(0, 76), Size = UDim2.new(1, 0, 1, -76), Parent = win.body })
+	New("UIGridLayout", { CellSize = UDim2.new(1 / 3, -8, 0, 214), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+	local access = { researched = ClientState.get("researched") or {}, passes = ClientState.get("passes") or {} }
 	for i, def in Units.all() do
 		local counts = byType[def.id]
-		if counts then
-			any = true
-			local row = Lib.card({ Size = UDim2.new(1, -6, 0, 56), LayoutOrder = i, Parent = list }, { Lib.pad(8, 14) })
-			Lib.text({ Text = def.name, FontFace = Theme.Font.Bold, Size = UDim2.new(0.4, 0, 0, 20), Parent = row })
-			Lib.text({ Text = def.role .. " · " .. def.desc, TextSize = Theme.TextSize.Tiny, TextColor3 = Theme.Color.Muted, Position = UDim2.fromOffset(0, 20), Size = UDim2.new(0.6, 0, 0, 16), Parent = row })
-			Lib.chip(("%d home"):format(counts.home), Theme.Color.TimeSoft, Theme.Color.Time, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -86, 0.5, 0), Parent = row })
-			Lib.chip(("%d mainland"):format(counts.mainland), Theme.Color.BadSoft, Theme.Color.Bad, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, 0), Parent = row })
+		local unlocked = Unlocks.check(def, access)
+		if counts or unlocked then
+			local card = Lib.card({ Name = def.id, LayoutOrder = counts and i or 100 + i, Parent = list }, { Lib.pad(8) })
+			local art = Lib.inset({ Size = UDim2.new(1, 0, 0, 92), Parent = card })
+			New("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(38, 48, 40), C.Ink), Rotation = 90, Parent = art })
+			Lib.viewport(ModelBuilder.unit(def), { Parent = art }, 35)
+			local roleCol = ROLE_COLORS[def.role] or C.Text
+			Lib.chip(string.upper(def.role), roleCol:Lerp(C.Ink, 0.75), roleCol, { Position = UDim2.fromOffset(6, 6), Parent = art })
+			Lib.display({ Text = string.upper(def.name), TextSize = 16, Position = UDim2.fromOffset(2, 98), Size = UDim2.new(1, -4, 0, 20), Parent = card })
+			Lib.text({
+				Text = ("HP %d · DMG %d/s · RNG %d · CAP %d"):format(def.hp, def.dps, def.range, def.capture),
+				FontFace = Theme.Font.Mono,
+				TextSize = 10,
+				TextColor3 = C.Muted,
+				Position = UDim2.fromOffset(2, 120),
+				Size = UDim2.new(1, -4, 0, 14),
+				Parent = card,
+			})
+			Lib.text({ Text = def.desc, TextSize = 12, TextColor3 = C.TextSoft, TextWrapped = true, Position = UDim2.fromOffset(2, 136), Size = UDim2.new(1, -4, 0, 30), TextYAlignment = Enum.TextYAlignment.Top, Parent = card })
+			local chips = New("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 2, 1, 0), Size = UDim2.new(1, -4, 0, 20), Parent = card }, { Lib.list("x", 6) })
+			if counts then
+				Lib.chip(("%d HOME"):format(counts.home), C.InfoSoft, C.Info, { Parent = chips })
+				Lib.chip(("%d DEPLOYED"):format(counts.mainland), C.BadSoft, C.Military, { Parent = chips })
+			else
+				Lib.chip("NONE BUILT", C.Inset, C.Faint, { Parent = chips })
+			end
 		end
 	end
-	if not any then
+	if #mine == 0 then
 		Lib.text({
-			Text = "No vehicles yet. Research Mechanized Forces, build a Military Factory, then queue vehicles in its panel.",
+			Name = "Empty",
+			Text = "No vehicles yet. Research Mechanized Forces, build a Military Factory, then queue vehicles from its panel.",
 			TextWrapped = true,
-			TextColor3 = Theme.Color.Muted,
-			Size = UDim2.new(1, 0, 0, 44),
+			TextColor3 = C.Muted,
+			LayoutOrder = 999,
 			Parent = list,
 		})
 	end

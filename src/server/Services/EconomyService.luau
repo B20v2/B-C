@@ -263,6 +263,7 @@ local function tick(dt: number)
 				S.ProductionService.tick(n, dt, now)
 				S.ResearchService.tick(n, now)
 				S.RewardService.tick(n, now)
+				S.NationService.tick(n, now)
 				if now >= n.nextPayAt then
 					n.nextPayAt += Config.PayInterval
 					if n.nextPayAt < now then
